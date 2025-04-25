@@ -436,73 +436,6 @@ async def chat(
         logger.error(f"Error processing request: {str(e)}")
         raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
 
-@app.post("/v1/process_audio/", 
-          response_model=AudioProcessingResponse,
-          summary="Process Audio File",
-          description="Process an uploaded audio file in the specified language. Rate limited to 100 requests per minute per user. Requires authentication.",
-          tags=["Audio"],
-          responses={
-              200: {"description": "Processed result", "model": AudioProcessingResponse},
-              401: {"description": "Unauthorized - Token required"},
-              429: {"description": "Rate limit exceeded"},
-              504: {"description": "Audio processing timeout"}
-          })
-@limiter.limit(settings.chat_rate_limit)
-async def process_audio(
-    request: Request,
-    file: UploadFile = File(..., description="Audio file to process"),
-    language: str = Query(..., description="Base64-encoded encrypted language of the audio (kannada, hindi, tamil after decryption)"),
-    credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
-    x_session_key: str = Header(..., alias="X-Session-Key")
-):
-    user_id = await get_current_user(credentials)
-    session_key = base64.b64decode(x_session_key)
-    
-    # Decrypt the language
-    try:
-        encrypted_language = base64.b64decode(language)
-        decrypted_language = decrypt_data(encrypted_language, session_key).decode("utf-8")
-    except Exception as e:
-        logger.error(f"Language decryption failed: {str(e)}")
-        raise HTTPException(status_code=400, detail="Invalid encrypted language")
-    
-    # Validate language
-    allowed_languages = ["kannada", "hindi", "tamil"]
-    if decrypted_language not in allowed_languages:
-        raise HTTPException(status_code=400, detail=f"Language must be one of {allowed_languages}")
-    
-    logger.info("Processing audio processing request", extra={
-        "endpoint": "/v1/process_audio",
-        "filename": file.filename,
-        "language": decrypted_language,
-        "client_ip": get_remote_address(request),
-        "user_id": user_id
-    })
-    
-    start_time = time()
-    try:
-        file_content = await file.read()
-        files = {"file": (file.filename, file_content, file.content_type)}
-        
-        external_url = f"{settings.external_api_base_url}/process_audio/?language={decrypted_language}"
-        response = requests.post(
-            external_url,
-            files=files,
-            headers={"accept": "application/json"},
-            timeout=60
-        )
-        response.raise_for_status()
-        
-        processed_result = response.json().get("result", "")
-        logger.info(f"Audio processing completed in {time() - start_time:.2f} seconds")
-        return AudioProcessingResponse(result=processed_result)
-    
-    except requests.Timeout:
-        raise HTTPException(status_code=504, detail="Audio processing service timeout")
-    except requests.RequestException as e:
-        logger.error(f"Audio processing request failed: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Audio processing failed: {str(e)}")
-
 @app.post("/v1/transcribe/", 
           response_model=TranscriptionResponse,
           summary="Transcribe Audio File",
@@ -563,44 +496,6 @@ async def transcribe_audio(
     except requests.RequestException as e:
         logger.error(f"Transcription request failed: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")
-
-@app.post("/v1/chat_v2", 
-          response_model=TranscriptionResponse,
-          summary="Chat with Image (V2)",
-          description="Generate a response from a text prompt and optional image. Rate limited to 100 requests per minute per user. Requires authentication.",
-          tags=["Chat"],
-          responses={
-              200: {"description": "Chat response", "model": TranscriptionResponse},
-              400: {"description": "Invalid prompt"},
-              401: {"description": "Unauthorized - Token required"},
-              429: {"description": "Rate limit exceeded"}
-          })
-@limiter.limit(settings.chat_rate_limit)
-async def chat_v2(
-    request: Request,
-    prompt: str = Form(..., description="Text prompt for chat"),
-    image: UploadFile = File(default=None, description="Optional image to accompany the prompt"),
-    credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme)
-):
-    user_id = await get_current_user(credentials)
-    if not prompt:
-        raise HTTPException(status_code=400, detail="Prompt cannot be empty")
-    
-    logger.info("Processing chat_v2 request", extra={
-        "endpoint": "/v1/chat_v2",
-        "prompt_length": len(prompt),
-        "has_image": bool(image),
-        "client_ip": get_remote_address(request),
-        "user_id": user_id
-    })
-    
-    try:
-        image_data = Image.open(await image.read()) if image else None
-        response_text = f"Processed: {prompt}" + (" with image" if image_data else "")
-        return TranscriptionResponse(text=response_text)
-    except Exception as e:
-        logger.error(f"Chat_v2 processing failed: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
 
 @app.post("/v1/translate", 
           response_model=TranslationResponse,
@@ -998,7 +893,7 @@ async def speech_to_speech(
         logger.error(f"External speech-to-speech API error: {str(e)}", extra={"user_id": user_id})
         raise HTTPException(status_code=500, detail=f"External API error: {str(e)}")
 
-
+'''
 @app.post("/v1/speech_to_speech_v2",
           summary="Speech-to-Speech Conversion",
           description="Convert input encrypted speech to processed speech in the specified encrypted language by calling an external speech-to-speech API. Rate limited to 5 requests per minute per user. Requires authentication and X-Session-Key header.",
@@ -1071,7 +966,7 @@ async def speech_to_speech_v2(
         logger.error(f"External speech-to-speech API error: {str(e)}")
         raise HTTPException(status_code=500, detail=f"External API error: {str(e)}")
 
-
+'''
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run the FastAPI server.")
     parser.add_argument("--port", type=int, default=settings.port, help="Port to run the server on.")

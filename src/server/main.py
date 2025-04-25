@@ -183,7 +183,8 @@ class TTSService(ABC):
 class ExternalTTSService(TTSService):
     async def generate_speech(self, payload: dict) -> requests.Response:
         try:
-            base_url = "http://80.225.221.97:7860/v1/audio/speech"
+
+            base_url = f"{settings.external_api_base_url}/v1/audio/speech"
             return requests.post(
                 base_url,
                 json=payload,
@@ -893,80 +894,6 @@ async def speech_to_speech(
         logger.error(f"External speech-to-speech API error: {str(e)}", extra={"user_id": user_id})
         raise HTTPException(status_code=500, detail=f"External API error: {str(e)}")
 
-'''
-@app.post("/v1/speech_to_speech_v2",
-          summary="Speech-to-Speech Conversion",
-          description="Convert input encrypted speech to processed speech in the specified encrypted language by calling an external speech-to-speech API. Rate limited to 5 requests per minute per user. Requires authentication and X-Session-Key header.",
-          tags=["Audio"],
-          responses={
-              200: {"description": "Audio stream", "content": {"audio/mp3": {"example": "Binary audio data"}}},
-              400: {"description": "Invalid input, encrypted audio, or language"},
-              401: {"description": "Unauthorized - Token required"},
-              429: {"description": "Rate limit exceeded"},
-              504: {"description": "External API timeout"},
-              500: {"description": "External API error"}
-          })
-async def speech_to_speech_v2(
-    request: Request,
-    file: UploadFile = File(..., description="Encrypted audio file to process"),
-    language: str = Query(..., description="Base64-encoded encrypted language of the audio (kannada, hindi, tamil after decryption)"),
-) -> StreamingResponse:
-    
-    # Decrypt the language
-    try:
-        encrypted_language = language
-        decrypted_language = encrypted_language
-    except Exception as e:
-        logger.error(f"Language decryption failed: {str(e)}")
-        raise HTTPException(status_code=400, detail="Invalid encrypted language")
-    
-    # Validate language
-    allowed_languages = [lang.value for lang in SupportedLanguage]
-    if decrypted_language not in allowed_languages:
-        raise HTTPException(status_code=400, detail=f"Language must be one of {allowed_languages}")
-    
-    logger.info("Processing speech-to-speech request", extra={
-        "endpoint": "/v1/speech_to_speech",
-        "audio_filename": file.filename,
-        "language": decrypted_language,
-        "client_ip": get_remote_address(request),
-    })
-
-    try:
-        encrypted_content = await file.read()
-        file_content = encrypted_content
-        files = {"file": (file.filename, file_content, file.content_type)}
-        external_url = f"{settings.external_api_base_url}/v1/speech_to_speech?language={decrypted_language}"
-
-        response = requests.post(
-            external_url,
-            files=files,
-            headers={"accept": "application/json"},
-            stream=True,
-            timeout=60
-        )
-        response.raise_for_status()
-
-        headers = {
-            "Content-Disposition": f"inline; filename=\"speech.mp3\"",
-            "Cache-Control": "no-cache",
-            "Content-Type": "audio/mp3"
-        }
-
-        return StreamingResponse(
-            response.iter_content(chunk_size=8192),
-            media_type="audio/mp3",
-            headers=headers
-        )
-
-    except requests.Timeout:
-        logger.error("External speech-to-speech API timed out")
-        raise HTTPException(status_code=504, detail="External API timeout")
-    except requests.RequestException as e:
-        logger.error(f"External speech-to-speech API error: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"External API error: {str(e)}")
-
-'''
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run the FastAPI server.")
     parser.add_argument("--port", type=int, default=settings.port, help="Port to run the server on.")

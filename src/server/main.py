@@ -179,32 +179,6 @@ class VisualQueryRequest(BaseModel):
 class VisualQueryResponse(BaseModel):
     answer: str
 
-# TTS Service Interface
-class TTSService(ABC):
-    @abstractmethod
-    async def generate_speech(self, payload: dict) -> requests.Response:
-        pass
-
-class ExternalTTSService(TTSService):
-    async def generate_speech(self, payload: dict) -> requests.Response:
-        try:
-            return requests.post(
-                settings.external_tts_url,
-                json=payload,
-                headers={"accept": "*/*", "Content-Type": "application/json"},
-                stream=True,
-                timeout=60
-            )
-        except requests.Timeout:
-            logger.error("External TTS API timeout")
-            raise HTTPException(status_code=504, detail="External TTS API timeout")
-        except requests.RequestException as e:
-            logger.error(f"External TTS API error: {str(e)}")
-            raise HTTPException(status_code=502, detail=f"External TTS service error: {str(e)}")
-
-def get_tts_service() -> TTSService:
-    return ExternalTTSService()
-
 # Endpoints with enhanced Swagger docs
 @app.get("/v1/health", 
          summary="Check API Health",
@@ -286,6 +260,12 @@ async def app_register_user(
     logger.debug(f"App registration attempt")
     return await app_register(register_request, x_session_key)
 
+
+def bytes_iterator(data: bytes, chunk_size: int = 8192):
+    """Yield chunks of bytes for streaming."""
+    for i in range(0, len(data), chunk_size):
+        yield data[i:i + chunk_size]
+
 @app.post("/v1/audio/speech",
           summary="Generate Speech from Text",
           description="Convert encrypted text to speech using an external TTS service. Rate limited to 5 requests per minute per user. Requires authentication and X-Session-Key header.",
@@ -304,8 +284,7 @@ async def generate_audio(
     input: str = Query(..., description="Base64-encoded encrypted text to convert to speech (max 1000 characters after decryption)"),
     response_format: str = Query("mp3", description="Audio format (ignored, defaults to mp3 for external API)"),
     credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
-    x_session_key: str = Header(..., alias="X-Session-Key"),
-    tts_service: TTSService = Depends(get_tts_service)
+    x_session_key: str = Header(..., alias="X-Session-Key")
 ):
     user_id = await get_current_user(credentials)
     session_key = base64.b64decode(x_session_key)
@@ -330,13 +309,11 @@ async def generate_audio(
         "user_id": user_id
     })
     
-    payload = {
-        "text": decrypted_input
-    }
     
     try:
-        response = await tts_service.generate_speech(payload)
-        response.raise_for_status()
+        response = dwani.Audio.speech(input=decrypted_input, response_format="mp3")
+
+        #response.raise_for_status()
     except requests.HTTPError as e:
         logger.error(f"External TTS request failed: {str(e)}")
         raise HTTPException(status_code=502, detail=f"External TTS service error: {str(e)}")
@@ -348,7 +325,7 @@ async def generate_audio(
     }
     
     return StreamingResponse(
-        response.iter_content(chunk_size=8192),
+        bytes_iterator(response),
         media_type="audio/mp3",
         headers=headers
     )
@@ -408,27 +385,7 @@ async def chat(
     
     try:
 
-
         response = dwani.Chat.create(prompt=decrypted_prompt, src_lang=decrypted_src_lang, tgt_lang=decrypted_tgt_lang)
-        '''
-        external_url = f"{settings.external_api_base_url}/v1/chat"
-        payload = {
-            "prompt": decrypted_prompt,
-            "src_lang": decrypted_src_lang,
-            "tgt_lang": decrypted_tgt_lang
-        }
-        
-        response = requests.post(
-            external_url,
-            json=payload,
-            headers={
-                "accept": "application/json",
-                "Content-Type": "application/json"
-            },
-            timeout=60
-        )
-        response.raise_for_status()
-        '''
         #response_data = response.json()
         response_text = response.get("response", "")
         logger.debug(f"Generated Chat response from external API: {response_text}")
@@ -481,18 +438,19 @@ async def transcribe_audio(
     try:
         encrypted_content = await file.read()
         file_content = decrypt_data(encrypted_content, session_key)
-        files = {"file": (file.filename, file_content, file.content_type)}
+
+
+        with tempfile.NamedTemporaryFile(delete=False, suffix=file.filename) as temp_file:
+        # Write the decrypted content to the temp file
+            #decrypted_content = await file.read()  # Assuming decrypted_content is the file content
+            temp_file.write(file_content)
+            temp_file_path = temp_file.name
+
+
+        response = dwani.ASR.transcribe(file_path=temp_file_path, language=decrypted_language)
+
+        transcription = response.get("text","")
         
-        external_url = f"{settings.external_api_base_url}/v1/transcribe/?language={decrypted_language}"
-        response = requests.post(
-            external_url,
-            files=files,
-            headers={"accept": "application/json"},
-            timeout=60
-        )
-        response.raise_for_status()
-        
-        transcription = response.json().get("text", "")
         logger.debug(f"Transcription completed in {time() - start_time:.2f} seconds")
         return TranscriptionResponse(text=transcription)
     
@@ -504,7 +462,6 @@ async def transcribe_audio(
     except requests.RequestException as e:
         logger.error(f"Transcription request failed: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")
-
 
 @app.post("/v1/translate", 
           response_model=TranslationResponse,
@@ -575,31 +532,11 @@ async def translate(
 
     logger.debug(f"Received translation request: {len(decrypted_sentences)} sentences, src_lang: {decrypted_src_lang}, tgt_lang: {decrypted_tgt_lang}, user_id: {user_id}")
 
-    external_url = f"{settings.external_api_base_url}/v1/translate"
 
-    payload = {
-        "sentences": decrypted_sentences,
-        "src_lang": decrypted_src_lang,
-        "tgt_lang": decrypted_tgt_lang
-    }
 
     try:
         response = dwani.Translate.run_translate(sentences=decrypted_sentences, src_lang=decrypted_src_lang, tgt_lang=decrypted_tgt_lang)
 
-        '''
-        response = requests.post(
-            external_url,
-            json=payload,
-            headers={
-                "accept": "application/json",
-                "Content-Type": "application/json"
-            },
-            timeout=60
-        )
-        response.raise_for_status()
-
-        response_data = response.json()
-        '''
         translations = response.get("translations", [])
 
         if not translations or len(translations) != len(decrypted_sentences):
@@ -803,21 +740,6 @@ async def visual_query(
         src_lang=decrypted_src_lang,
         tgt_lang=decrypted_tgt_lang
         )
-        '''
-        files = {"file": (file.filename, decrypted_content, file.content_type)}
-        data = {"query": decrypted_query}
-        
-        response = requests.post(
-            external_url,
-            files=files,
-            data=data,
-            headers={"accept": "application/json"},
-            timeout=60
-        )
-        response.raise_for_status()
-        
-        response_data = response.json()
-        '''
         answer = response.get("answer", "")
         
         if not answer:
@@ -894,36 +816,61 @@ async def speech_to_speech(
     try:
         encrypted_content = await file.read()
         file_content = decrypt_data(encrypted_content, session_key)
-        files = {"file": (file.filename, file_content, file.content_type)}
-        external_url = f"{settings.external_api_base_url}/v1/speech_to_speech?language={decrypted_language}"
+        with tempfile.NamedTemporaryFile(delete=False, suffix=file.filename) as temp_file:
+            temp_file.write(file_content)
+            temp_file_path = temp_file.name
 
-        response = requests.post(
-            external_url,
-            files=files,
-            headers={"accept": "application/json"},
-            stream=True,
-            timeout=60
-        )
-        response.raise_for_status()
+        try:
+            # Transcribe audio
+            response = dwani.ASR.transcribe(file_path=temp_file_path, language=decrypted_language)
+            transcription = response.get("text", "")
+            if not transcription:
+                logger.error("Transcription is empty")
+                raise HTTPException(status_code=400, detail="Transcription failed or returned empty text")
 
-        headers = {
-            "Content-Disposition": f"inline; filename=\"speech.mp3\"",
-            "Cache-Control": "no-cache",
-            "Content-Type": "audio/mp3"
-        }
+            # Debug inputs
+            logger.debug(f"Transcription: {transcription}, Language: {decrypted_language}")
 
-        return StreamingResponse(
-            response.iter_content(chunk_size=8192),
-            media_type="audio/mp3",
-            headers=headers
-        )
+            # Chat processing
+            try:
+                chat_response = dwani.Chat.create(
+                    prompt=transcription,
+                    src_lang="kan_Knda",
+                    tgt_lang="kan_Knda"
+                )
+            except dwani.exceptions.DhwaniAPIError as e:
+                logger.error(f"Chat API failed: {str(e)}")
+                raise HTTPException(status_code=502, detail=f"Chat service error: {str(e)}")
 
+            response_text = chat_response.get("response", "")
+            if not response_text:
+                logger.error("Chat response is empty")
+                raise HTTPException(status_code=500, detail="Chat service returned empty response")
+
+            # Generate audio
+            response = dwani.Audio.speech(input=response_text, response_format="mp3")
+
+            headers = {
+                "Content-Disposition": f"inline; filename=\"speech.mp3\"",
+                "Cache-Control": "no-cache",
+                "Content-Type": "audio/mp3"
+            }
+
+            return StreamingResponse(
+                bytes_iterator(response),
+                media_type="audio/mp3",
+                headers=headers
+            )
+        finally:
+            # Clean up temporary file
+            os.unlink(temp_file_path)
     except requests.Timeout:
         logger.error("External speech-to-speech API timed out", extra={"user_id": user_id})
         raise HTTPException(status_code=504, detail="External API timeout")
     except requests.RequestException as e:
         logger.error(f"External speech-to-speech API error: {str(e)}", extra={"user_id": user_id})
         raise HTTPException(status_code=500, detail=f"External API error: {str(e)}")
+
 
 
 if __name__ == "__main__":

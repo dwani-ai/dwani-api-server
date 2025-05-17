@@ -55,6 +55,10 @@ class Settings(BaseSettings):
     port: int = 7860
     chat_rate_limit: str = "100/minute"
     speech_rate_limit: str = "5/minute"
+    external_tts_url: str = Field(..., env="EXTERNAL_TTS_URL")
+    external_asr_url: str = Field(..., env="EXTERNAL_ASR_URL")
+    external_text_gen_url: str = Field(..., env="EXTERNAL_TEXT_GEN_URL")
+    external_audio_proc_url: str = Field(..., env="EXTERNAL_AUDIO_PROC_URL")
     external_api_base_url: str = Field("http://localhost:7860", env="EXTERNAL_API_BASE_URL")  # New field
     external_pdf_api_base_url: str = Field("http://localhost:7861", env="EXTERNAL_PDF_API_BASE_URL")  # New field
     default_admin_username: str = Field("admin", env="DEFAULT_ADMIN_USERNAME")

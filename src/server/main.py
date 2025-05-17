@@ -3,7 +3,8 @@ import io
 from time import time
 from typing import List, Optional
 from abc import ABC, abstractmethod
-
+import dwani
+import os
 import uvicorn
 from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, UploadFile, Header, Form
 from fastapi.middleware.cors import CORSMiddleware
@@ -29,6 +30,10 @@ from config.logging_config import logger
 
 settings = Settings()
 
+
+dwani.api_key = os.getenv("DWANI_API_KEY")
+
+dwani.api_base = os.getenv("DWANI_API_BASE_URL")
 # FastAPI app setup with enhanced docs
 app = FastAPI(
     title="Dhwani API",
@@ -183,10 +188,8 @@ class TTSService(ABC):
 class ExternalTTSService(TTSService):
     async def generate_speech(self, payload: dict) -> requests.Response:
         try:
-
-            base_url = f"{settings.external_api_base_url}/v1/audio/speech"
             return requests.post(
-                base_url,
+                settings.external_tts_url,
                 json=payload,
                 headers={"accept": "*/*", "Content-Type": "application/json"},
                 stream=True,
@@ -280,7 +283,7 @@ async def app_register_user(
     register_request: RegisterRequest,
     x_session_key: str = Header(..., alias="X-Session-Key")
 ):
-    logger.info(f"App registration attempt")
+    logger.debug(f"App registration attempt")
     return await app_register(register_request, x_session_key)
 
 @app.post("/v1/audio/speech",
@@ -320,7 +323,7 @@ async def generate_audio(
     if len(decrypted_input) > 1000:
         raise HTTPException(status_code=400, detail="Decrypted input cannot exceed 1000 characters")
     
-    logger.info("Processing speech request", extra={
+    logger.debug("Processing speech request", extra={
         "endpoint": "/v1/audio/speech",
         "input_length": len(decrypted_input),
         "client_ip": get_remote_address(request),
@@ -401,9 +404,13 @@ async def chat(
     if len(decrypted_prompt) > 1000:
         raise HTTPException(status_code=400, detail="Decrypted prompt cannot exceed 1000 characters")
     
-    logger.info(f"Received prompt: {decrypted_prompt}, src_lang: {decrypted_src_lang}, user_id: {user_id}")
+    logger.debug(f"Received prompt: {decrypted_prompt}, src_lang: {decrypted_src_lang}, user_id: {user_id}")
     
     try:
+
+
+        response = dwani.Chat.create(prompt=decrypted_prompt, src_lang=decrypted_src_lang, tgt_lang=decrypted_tgt_lang)
+        '''
         external_url = f"{settings.external_api_base_url}/v1/chat"
         payload = {
             "prompt": decrypted_prompt,
@@ -421,10 +428,10 @@ async def chat(
             timeout=60
         )
         response.raise_for_status()
-        
-        response_data = response.json()
-        response_text = response_data.get("response", "")
-        logger.info(f"Generated Chat response from external API: {response_text}")
+        '''
+        #response_data = response.json()
+        response_text = response.get("response", "")
+        logger.debug(f"Generated Chat response from external API: {response_text}")
         return ChatResponse(response=response_text)
     
     except requests.Timeout:
@@ -486,7 +493,7 @@ async def transcribe_audio(
         response.raise_for_status()
         
         transcription = response.json().get("text", "")
-        logger.info(f"Transcription completed in {time() - start_time:.2f} seconds")
+        logger.debug(f"Transcription completed in {time() - start_time:.2f} seconds")
         return TranscriptionResponse(text=transcription)
     
     except HTTPException:
@@ -497,6 +504,7 @@ async def transcribe_audio(
     except requests.RequestException as e:
         logger.error(f"Transcription request failed: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")
+
 
 @app.post("/v1/translate", 
           response_model=TranslationResponse,
@@ -565,7 +573,7 @@ async def translate(
         logger.error(f"Unsupported language codes: src={decrypted_src_lang}, tgt={decrypted_tgt_lang}")
         raise HTTPException(status_code=400, detail=f"Unsupported language codes: src={decrypted_src_lang}, tgt={decrypted_tgt_lang}")
 
-    logger.info(f"Received translation request: {len(decrypted_sentences)} sentences, src_lang: {decrypted_src_lang}, tgt_lang: {decrypted_tgt_lang}, user_id: {user_id}")
+    logger.debug(f"Received translation request: {len(decrypted_sentences)} sentences, src_lang: {decrypted_src_lang}, tgt_lang: {decrypted_tgt_lang}, user_id: {user_id}")
 
     external_url = f"{settings.external_api_base_url}/v1/translate"
 
@@ -576,6 +584,9 @@ async def translate(
     }
 
     try:
+        response = dwani.Translate.run_translate(sentences=decrypted_sentences, src_lang=decrypted_src_lang, tgt_lang=decrypted_tgt_lang)
+
+        '''
         response = requests.post(
             external_url,
             json=payload,
@@ -588,13 +599,14 @@ async def translate(
         response.raise_for_status()
 
         response_data = response.json()
-        translations = response_data.get("translations", [])
+        '''
+        translations = response.get("translations", [])
 
         if not translations or len(translations) != len(decrypted_sentences):
-            logger.warning(f"Unexpected response format: {response_data}")
+            logger.warning(f"Unexpected response format: {response}")
             raise HTTPException(status_code=500, detail="Invalid response from translation service")
 
-        logger.info(f"Translation successful: {translations}")
+        logger.debug(f"Translation successful: {translations}")
         return TranslationResponse(translations=translations)
 
     except requests.Timeout:
@@ -653,7 +665,7 @@ async def extract_text(
         logger.error(f"PDF decryption failed: {str(e)}")
         raise HTTPException(status_code=400, detail="Invalid encrypted PDF")
     
-    logger.info("Processing PDF text extraction request", extra={
+    logger.debug("Processing PDF text extraction request", extra={
         "endpoint": "/v1/extract-text",
         "file_name": file.filename,
         "page_number": page_number,
@@ -681,7 +693,7 @@ async def extract_text(
             logger.warning("No page_content found in external API response")
             extracted_text = ""
         
-        logger.info(f"PDF text extraction completed in {time() - start_time:.2f} seconds")
+        logger.debug(f"PDF text extraction completed in {time() - start_time:.2f} seconds")
         return PDFTextExtractionResponse(page_content=extracted_text.strip())
     
     except requests.Timeout:
@@ -694,6 +706,7 @@ async def extract_text(
         logger.error(f"Invalid JSON response from external API: {str(e)}")
         raise HTTPException(status_code=500, detail="Invalid response format from external API")
 
+import tempfile
 @app.post("/v1/visual_query", 
           response_model=VisualQueryResponse,
           summary="Visual Query with Image",
@@ -722,7 +735,7 @@ async def visual_query(
     try:
         import json
         visual_query_request = VisualQueryRequest.parse_raw(data)
-        logger.info(f"Received visual query JSON: {data}")
+        logger.debug(f"Received visual query JSON: {data}")
     except Exception as e:
         logger.error(f"Failed to parse JSON data: {str(e)}")
         raise HTTPException(status_code=422, detail=f"Invalid JSON data: {str(e)}")
@@ -764,7 +777,7 @@ async def visual_query(
         logger.error(f"Image decryption failed: {str(e)}")
         raise HTTPException(status_code=400, detail="Invalid encrypted image")
     
-    logger.info("Processing visual query request", extra={
+    logger.debug("Processing visual query request", extra={
         "endpoint": "/v1/visual_query",
         "query_length": len(decrypted_query),
         "file_name": file.filename,
@@ -777,6 +790,20 @@ async def visual_query(
     external_url = f"{settings.external_api_base_url}/v1/visual_query/?src_lang={decrypted_src_lang}&tgt_lang={decrypted_tgt_lang}"
     
     try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=file.filename) as temp_file:
+        # Write the decrypted content to the temp file
+            #decrypted_content = await file.read()  # Assuming decrypted_content is the file content
+            temp_file.write(decrypted_content)
+            temp_file_path = temp_file.name
+
+
+        response = dwani.Vision.caption(
+        file_path=temp_file_path,
+        query=decrypted_query,
+        src_lang=decrypted_src_lang,
+        tgt_lang=decrypted_tgt_lang
+        )
+        '''
         files = {"file": (file.filename, decrypted_content, file.content_type)}
         data = {"query": decrypted_query}
         
@@ -790,13 +817,14 @@ async def visual_query(
         response.raise_for_status()
         
         response_data = response.json()
-        answer = response_data.get("answer", "")
+        '''
+        answer = response.get("answer", "")
         
         if not answer:
-            logger.warning(f"Empty answer received from external API: {response_data}")
+            logger.warning(f"Empty answer received from external API: {response}")
             raise HTTPException(status_code=500, detail="No answer provided by visual query service")
         
-        logger.info(f"Visual query successful: {answer}")
+        logger.debug(f"Visual query successful: {answer}")
         return VisualQueryResponse(answer=answer)
     
     except requests.Timeout:
@@ -808,6 +836,9 @@ async def visual_query(
     except ValueError as e:
         logger.error(f"Invalid JSON response: {str(e)}")
         raise HTTPException(status_code=500, detail="Invalid response format from visual query service")
+    finally:
+        # Clean up the temporary file
+        os.unlink(temp_file_path)
 
 from enum import Enum
 
@@ -852,7 +883,7 @@ async def speech_to_speech(
     if decrypted_language not in allowed_languages:
         raise HTTPException(status_code=400, detail=f"Language must be one of {allowed_languages}")
     
-    logger.info("Processing speech-to-speech request", extra={
+    logger.debug("Processing speech-to-speech request", extra={
         "endpoint": "/v1/speech_to_speech",
         "audio_filename": file.filename,
         "language": decrypted_language,
@@ -893,6 +924,7 @@ async def speech_to_speech(
     except requests.RequestException as e:
         logger.error(f"External speech-to-speech API error: {str(e)}", extra={"user_id": user_id})
         raise HTTPException(status_code=500, detail=f"External API error: {str(e)}")
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run the FastAPI server.")

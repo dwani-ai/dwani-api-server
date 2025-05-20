@@ -6,10 +6,10 @@ WORKDIR /app
 # Copy application code
 COPY . .
 
-
+RUN pip install openai dwani
 # Expose port from settings
 EXPOSE 7860
-RUN pip install dwani
+
 # Healthcheck
 HEALTHCHECK --interval=30s --timeout=3s \
   CMD curl -f http://localhost:7860/v1/health || exit 1

@@ -238,7 +238,7 @@ async def generate_audio(
     finally:
         # Close the temporary file to ensure it's fully written
         temp_file.close()
-@app.post("/v1/indic_chat", 
+@app.post("/v0/indic_chat", 
           response_model=ChatResponse,
           summary="Chat with AI",
           description="Generate a chat response from a prompt and language code.",
@@ -293,7 +293,7 @@ async def chat(
         logger.error(f"Error processing request: {str(e)}")
         raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
     
-@app.post("/v2/indic_chat", 
+@app.post("/v1/indic_chat", 
           response_model=ChatResponse,
           summary="Chat with AI",
           description="Generate a chat response from a prompt, language code, and model.",

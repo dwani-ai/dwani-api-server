@@ -62,13 +62,16 @@ class ChatRequest(BaseModel):
     prompt: str = Field(..., description="Prompt for chat (max 1000 characters)")
     src_lang: str = Field(..., description="Source language code")
     tgt_lang: str = Field(..., description="Target language code")
+    model: str = Field(..., description="LLM model")
+    
 
     class Config:
         schema_extra = {
             "example": {
                 "prompt": "Hello, how are you?",
                 "src_lang": "kan_Knda",
-                "tgt_lang": "kan_Knda"
+                "tgt_lang": "kan_Knda",
+                "model": "gemma3"
             }
         }
 
@@ -238,65 +241,11 @@ async def generate_audio(
     finally:
         # Close the temporary file to ensure it's fully written
         temp_file.close()
-@app.post("/v0/indic_chat", 
+    
+@app.post("/v1/indic_chat",
           response_model=ChatResponse,
           summary="Chat with AI",
-          description="Generate a chat response from a prompt and language code.",
-          tags=["Chat"],
-          responses={
-              200: {"description": "Chat response", "model": ChatResponse},
-              400: {"description": "Invalid prompt or language code"},
-              504: {"description": "Chat service timeout"}
-          })
-async def chat(
-    request: Request,
-    chat_request: ChatRequest
-):
-    if not chat_request.prompt:
-        raise HTTPException(status_code=400, detail="Prompt cannot be empty")
-    if len(chat_request.prompt) > 1000:
-        raise HTTPException(status_code=400, detail="Prompt cannot exceed 1000 characters")
-    
-    logger.debug(f"Received prompt: {chat_request.prompt}, src_lang: {chat_request.src_lang}")
-    
-    try:
-        external_url = f"{os.getenv('DWANI_API_BASE_URL_LLM')}/indic_chat"  # Updated to match curl command
-        payload = {
-            "prompt": chat_request.prompt,
-            "src_lang": chat_request.src_lang,
-            "tgt_lang": chat_request.tgt_lang
-        }
-        
-        response = requests.post(
-            external_url,
-            json=payload,
-            headers={
-                "accept": "application/json",
-                "Content-Type": "application/json"
-            },
-            timeout=60
-        )
-        response.raise_for_status()
-        
-        response_data = response.json()
-        response_text = response_data.get("response", "")
-        logger.debug(f"Generated Chat response from external API: {response_text}")
-        return ChatResponse(response=response_text)
-    
-    except requests.Timeout:
-        logger.error("External chat API request timed out")
-        raise HTTPException(status_code=504, detail="Chat service timeout")
-    except requests.RequestException as e:
-        logger.error(f"Error calling external chat API: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Chat failed: {str(e)}")
-    except Exception as e:
-        logger.error(f"Error processing request: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
-    
-@app.post("/v1/indic_chat", 
-          response_model=ChatResponse,
-          summary="Chat with AI",
-          description="Generate a chat response from a prompt, language code, and model.",
+          description="Generate a chat response from a prompt, language code, and model, with translation support and time-to-words conversion.",
           tags=["Chat"],
           responses={
               200: {"description": "Chat response", "model": ChatResponse},
@@ -307,33 +256,30 @@ async def chat_v2(
     request: Request,
     chat_request: ChatRequest
 ):
-    if not chat_request.prompt:
+    if not chat_request.prompt.strip():
         raise HTTPException(status_code=400, detail="Prompt cannot be empty")
     if len(chat_request.prompt) > 1000:
         raise HTTPException(status_code=400, detail="Prompt cannot exceed 1000 characters")
-    
-    # Default model to gemma3 if not specified
-    model = chat_request.model if hasattr(chat_request, 'model') and chat_request.model else "gemma3"
-    
+
     # Validate model parameter
-    valid_models = ["gemma3", "qwen3", "sarvam-m"]
-    if model not in valid_models:
+    valid_models = ["gemma3", "moondream", "qwen2.5vl", "qwen3", "sarvam-m", "deepseek-r1"]
+    if chat_request.model not in valid_models:
         raise HTTPException(status_code=400, detail=f"Invalid model. Choose from {valid_models}")
-    
-    logger.debug(f"Received prompt: {chat_request.prompt}, src_lang: {chat_request.src_lang}, model: {model}")
-    
+
+    logger.debug(f"Received prompt: {chat_request.prompt}, src_lang: {chat_request.src_lang}, tgt_lang: {chat_request.tgt_lang}, model: {chat_request.model}")
+
     try:
         # Construct the external URL based on the selected model
         base_url = os.getenv('DWANI_API_BASE_URL_LLM')
         external_url = f"{base_url}/indic_chat"
-        
+
         payload = {
             "prompt": chat_request.prompt,
             "src_lang": chat_request.src_lang,
             "tgt_lang": chat_request.tgt_lang,
-            "model": model
+            "model": chat_request.model
         }
-        
+
         response = requests.post(
             external_url,
             json=payload,
@@ -344,12 +290,12 @@ async def chat_v2(
             timeout=60
         )
         response.raise_for_status()
-        
+
         response_data = response.json()
         response_text = response_data.get("response", "")
-        logger.debug(f"Generated Chat response from external API: {response_text}, model: {model}")
+        logger.debug(f"Generated Chat response from external API: {response_text}, model: {chat_request.model}")
         return ChatResponse(response=response_text)
-    
+
     except requests.Timeout:
         logger.error("External chat API request timed out")
         raise HTTPException(status_code=504, detail="Chat service timeout")
@@ -359,7 +305,8 @@ async def chat_v2(
     except Exception as e:
         logger.error(f"Error processing request: {str(e)}")
         raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
-    
+
+
 @app.post("/v1/transcribe/", 
           response_model=TranscriptionResponse,
           summary="Transcribe Audio File",

@@ -59,11 +59,10 @@ class AudioProcessingResponse(BaseModel):
         schema_extra = {"example": {"result": "Processed audio output"}} 
 
 class ChatRequest(BaseModel):
-    prompt: str = Field(..., description="Prompt for chat (max 1000 characters)")
+    prompt: str = Field(..., description="Prompt for chat (max 1000 characters)", max_length=1000)
     src_lang: str = Field(..., description="Source language code")
     tgt_lang: str = Field(..., description="Target language code")
-    model: str = Field(..., description="LLM model")
-    
+    model: str = Field(default="gemma3", description="LLM model")
 
     class Config:
         schema_extra = {
@@ -105,13 +104,16 @@ class VisualQueryRequest(BaseModel):
     query: str = Field(..., description="Text query")
     src_lang: str = Field(..., description="Source language code")
     tgt_lang: str = Field(..., description="Target language code")
+    model: str = Field(default="gemma3", description="LLM model")
+
 
     class Config:
         schema_extra = {
             "example": {
                 "query": "Describe the image",
                 "src_lang": "kan_Knda",
-                "tgt_lang": "kan_Knda"
+                "tgt_lang": "kan_Knda",
+                "model": "gemma3"
             }
         }
 

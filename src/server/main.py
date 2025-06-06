@@ -1100,12 +1100,10 @@ async def custom_prompt_pdf(
         logger.error(f"Invalid JSON response from external API: {str(e)}")
         raise HTTPException(status_code=500, detail="Invalid response format from external API")
 
-
-# Indic Custom Prompt PDF Endpoint
 @app.post("/v1/indic-custom-prompt-pdf",
           response_model=IndicCustomPromptPDFResponse,
           summary="Process a PDF with a Custom Prompt and Translation",
-          description="Extract text from a PDF page, process it with a custom prompt, and translate the response.",
+          description="Extract text from a specific page of a PDF, process it with a custom prompt, and translate the response into a target language using an external API.",
           tags=["PDF"],
           responses={
               200: {"description": "Extracted text, custom prompt response, and translated response", "model": IndicCustomPromptPDFResponse},
@@ -1118,22 +1116,21 @@ async def indic_custom_prompt_pdf(
     file: UploadFile = File(..., description="PDF file to process"),
     page_number: int = Form(..., description="Page number to process (1-based indexing)", ge=1),
     prompt: str = Form(..., description="Custom prompt to process the page content"),
-    src_lang: str = Form(..., description="Source language code (e.g., eng_Latn)"),
-    tgt_lang: str = Form(..., description="Target language code (e.g., kan_Knda)"),
+    src_lang: str = Form("eng_Latn", description="Source language code (e.g., eng_Latn)"),  # Default added
+    tgt_lang: str = Form("kan_Knda", description="Target language code (e.g., kan_Knda)"),  # Default added
     model: str = Form(default="gemma3", description="LLM model", enum=SUPPORTED_MODELS)
 ):
-    if not file.filename.lower().endswith(".pdf"):
+    if not file.filename.lower().endswith('.pdf'):
         raise HTTPException(status_code=400, detail="File must be a PDF")
     if page_number < 1:
         raise HTTPException(status_code=400, detail="Page number must be at least 1")
     if not prompt.strip():
         raise HTTPException(status_code=400, detail="Prompt cannot be empty")
 
-    supported_languages = ["kan_Knda", "hin_Deva", "tam_Taml", "tel_Telu", "eng_Latn"]
-    if src_lang not in supported_languages or tgt_lang not in supported_languages:
-        raise HTTPException(status_code=400, detail=f"Invalid language codes: src={src_lang}, tgt={tgt_lang}")
-
+    # Validate inputs
     validate_model(model)
+    validate_language(src_lang, "source language")
+    validate_language(tgt_lang, "target language")
 
     logger.debug("Processing indic custom prompt PDF request", extra={
         "endpoint": "/v1/indic-custom-prompt-pdf",
@@ -1153,7 +1150,7 @@ async def indic_custom_prompt_pdf(
         file_content = await file.read()
         files = {"file": (file.filename, file_content, "application/pdf")}
         data = {
-            "page_number": page_number,
+            "page_number": str(page_number),
             "prompt": prompt,
             "source_language": src_lang,
             "target_language": tgt_lang,
@@ -1184,7 +1181,7 @@ async def indic_custom_prompt_pdf(
                 processed_page=processed_page
             )
 
-        logger.debug(f"Indic custom prompt PDF completed in {time() - start_time:.2f} seconds")
+        logger.debug(f"Indic custom prompt PDF completed in {time() - start_time:.2f} seconds, page processed: {processed_page}")
         return IndicCustomPromptPDFResponse(
             original_text=original_text,
             response=custom_response,

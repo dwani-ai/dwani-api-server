@@ -755,6 +755,7 @@ async def extract_and_translate(
     })
 
     external_url = f"{os.getenv('DWANI_API_BASE_URL_PDF')}/indic-extract-text/"
+    start_time = time()
 
     try:
         file_content = await file.read()

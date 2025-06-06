@@ -31,6 +31,8 @@ app = FastAPI(
 # Supported models
 SUPPORTED_MODELS = ["gemma3", "moondream", "qwen2.5vl", "qwen3", "sarvam-m", "deepseek-r1"]
 
+SUPPORTED_LANGUAGES = ["kan_Knda", "hin_Deva", "tam_Taml", "tel_Telu", "eng_Latn"]
+
 # Pydantic models (updated to include model validation)
 class VisualQueryRequest(BaseModel):
     query: str = Field(..., description="Text query", max_length=1000)
@@ -78,6 +80,7 @@ class SummarizePDFResponse(BaseModel):
     summary: str = Field(..., description="Summary of the specified page")
     processed_page: int = Field(..., description="Page number processed")
 
+
 class IndicSummarizePDFResponse(BaseModel):
     original_text: str = Field(..., description="Extracted text from the specified page")
     summary: str = Field(..., description="Summary of the specified page in the source language")
@@ -95,6 +98,18 @@ class IndicCustomPromptPDFResponse(BaseModel):
     translated_response: str = Field(..., description="Translated response in the target language")
     processed_page: int = Field(..., description="Page number processed")
 
+
+# Helper function for model selection
+def validate_model(model: str) -> str:
+    if model not in SUPPORTED_MODELS:
+        raise HTTPException(status_code=400, detail=f"Invalid model: {model}. Must be one of {SUPPORTED_MODELS}")
+    return model
+
+
+def validate_language(lang: str, field_name: str) -> str:
+    if lang not in SUPPORTED_LANGUAGES:
+        raise HTTPException(status_code=400, detail=f"Invalid {field_name}: {lang}. Must be one of {SUPPORTED_LANGUAGES}")
+    return lang
 
 app.add_middleware(
     CORSMiddleware,
@@ -503,12 +518,6 @@ class VisualQueryResponse(BaseModel):
         schema_extra = {"example": {"answer": "The image shows a screenshot of a webpage."}}
 # Updated Visual Query Endpoint
 
-# Helper function for model selection
-def validate_model(model: str) -> str:
-    if model not in SUPPORTED_MODELS:
-        raise HTTPException(status_code=400, detail=f"Invalid model: {model}. Must be one of {SUPPORTED_MODELS}")
-    return model
-
 # Visual Query Endpoint
 @app.post("/v1/indic_visual_query",
           response_model=VisualQueryResponse,
@@ -911,12 +920,11 @@ async def summarize_pdf(
         logger.error(f"Invalid JSON response from external API: {str(e)}")
         raise HTTPException(status_code=500, detail="Invalid response format from external API")
 
-
-# Indic Summarize PDF Endpoint
+# Indic Summarize PDF Endpoint (Updated)
 @app.post("/v1/indic-summarize-pdf",
           response_model=IndicSummarizePDFResponse,
           summary="Summarize and Translate a Specific Page of a PDF",
-          description="Summarize a PDF page and translate the summary into the target language.",
+          description="Summarize the content of a specific page of a PDF file and translate the summary into the target language using an external API.",
           tags=["PDF"],
           responses={
               200: {"description": "Extracted text, summary, and translated summary", "model": IndicSummarizePDFResponse},
@@ -928,22 +936,21 @@ async def indic_summarize_pdf(
     request: Request,
     file: UploadFile = File(..., description="PDF file to summarize"),
     page_number: int = Form(..., description="Page number to summarize (1-based indexing)", ge=1),
-    src_lang: str = Form(..., description="Source language code (e.g., eng_Latn)"),
-    tgt_lang: str = Form(..., description="Target language code (e.g., kan_Knda)"),
+    src_lang: str = Form("eng_Latn", description="Source language code (e.g., eng_Latn)"),  # Default added
+    tgt_lang: str = Form("kan_Knda", description="Target language code (e.g., kan_Knda)"),  # Default added
     model: str = Form(default="gemma3", description="LLM model", enum=SUPPORTED_MODELS)
 ):
-    if not file.filename.lower().endswith(".pdf"):
+    if not file.filename.lower().endswith('.pdf'):
         raise HTTPException(status_code=400, detail="File must be a PDF")
     if page_number < 1:
         raise HTTPException(status_code=400, detail="Page number must be at least 1")
 
-    supported_languages = ["kan_Knda", "hin_Deva", "tam_Taml", "tel_Telu", "eng_Latn"]
-    if src_lang not in supported_languages or tgt_lang not in supported_languages:
-        raise HTTPException(status_code=400, detail=f"Invalid language codes: src={src_lang}, tgt={tgt_lang}")
-
+    # Validate inputs
     validate_model(model)
+    validate_language(src_lang, "source language")
+    validate_language(tgt_lang, "target language")
 
-    logger.debug("Processing indic summarize PDF request", extra={
+    logger.debug("Processing Indic PDF summary request", extra={
         "endpoint": "/v1/indic-summarize-pdf",
         "file_name": file.filename,
         "page_number": page_number,
@@ -960,7 +967,7 @@ async def indic_summarize_pdf(
         file_content = await file.read()
         files = {"file": (file.filename, file_content, "application/pdf")}
         data = {
-            "page_number": page_number,
+            "page_number": str(page_number),
             "src_lang": src_lang,
             "tgt_lang": tgt_lang,
             "model": model
@@ -990,7 +997,7 @@ async def indic_summarize_pdf(
                 processed_page=processed_page
             )
 
-        logger.debug(f"Indic summarize PDF completed in {time() - start_time:.2f} seconds")
+        logger.debug(f"Indic PDF summary completed in {time() - start_time:.2f} seconds, page processed: {processed_page}")
         return IndicSummarizePDFResponse(
             original_text=original_text,
             summary=summary,
@@ -999,10 +1006,10 @@ async def indic_summarize_pdf(
         )
 
     except requests.Timeout:
-        logger.error("External indic summarize PDF API timed out")
+        logger.error("External Indic PDF summary API timed out")
         raise HTTPException(status_code=504, detail="External API timeout")
     except requests.RequestException as e:
-        logger.error(f"External indic summarize PDF API error: {str(e)}")
+        logger.error(f"External Indic PDF summary API error: {str(e)}")
         raise HTTPException(status_code=500, detail=f"External API error: {str(e)}")
     except ValueError as e:
         logger.error(f"Invalid JSON response from external API: {str(e)}")

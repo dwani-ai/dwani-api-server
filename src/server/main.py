@@ -446,7 +446,8 @@ async def visual_query(
     query: str = Form(..., description="Text query to describe or analyze the image (e.g., 'describe the image')"),
     file: UploadFile = File(..., description="Image file to analyze (e.g., PNG, JPEG)"),
     src_lang: str = Query(..., description="Source language code (e.g., kan_Knda, en)"),
-    tgt_lang: str = Query(..., description="Target language code (e.g., kan_Knda, en)")
+    tgt_lang: str = Query(..., description="Target language code (e.g., kan_Knda, en)"),
+    model: str = Field(default="gemma3", description="LLM model")
 ):
     # Validate query
     if not query.strip():
@@ -478,7 +479,8 @@ async def visual_query(
         data = {
             "prompt": query,
             "source_language": src_lang,
-            "target_language": tgt_lang
+            "target_language": tgt_lang,
+            "model": model
         }
         
         response = requests.post(

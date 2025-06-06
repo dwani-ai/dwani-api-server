@@ -462,13 +462,14 @@ async def visual_query(
     if tgt_lang not in supported_languages:
         raise HTTPException(status_code=400, detail=f"Unsupported target language: {tgt_lang}. Must be one of {supported_languages}")
     
-    logger.debug("Processing visual query request", extra={
+    logger.info("Processing visual query request", extra={
         "endpoint": "/v1/indic_visual_query",
         "query_length": len(query),
         "file_name": file.filename,
         "client_ip": request.client.host,
         "src_lang": src_lang,
-        "tgt_lang": tgt_lang
+        "tgt_lang": tgt_lang,
+        "model": model
     })
     
     external_url = f"{os.getenv('DWANI_API_BASE_URL_VISION')}/indic-visual-query/"

@@ -433,7 +433,7 @@ class VisualQueryResponse(BaseModel):
 @app.post("/v1/indic_visual_query", 
           response_model=VisualQueryResponse,
           summary="Visual Query with Image",
-          description="Process a visual query with a text query, image, and language codes. Provide the query and image as form data, and source/target languages as query parameters.",
+          description="Process a visual query with a text query, image, and language codes. Provide all parameters in the JSON body.",
           tags=["Chat"],
           responses={
               200: {"description": "Query response", "model": VisualQueryResponse},
@@ -443,33 +443,21 @@ class VisualQueryResponse(BaseModel):
           })
 async def visual_query(
     request: Request,
-    query: str = Form(..., description="Text query to describe or analyze the image (e.g., 'describe the image')"),
     file: UploadFile = File(..., description="Image file to analyze (e.g., PNG, JPEG)"),
-    src_lang: str = Query(..., description="Source language code (e.g., kan_Knda, en)"),
-    tgt_lang: str = Query(..., description="Target language code (e.g., kan_Knda, en)"),
-    model: str = Form(default="gemma3", description="LLM model")
+    query_data: VisualQueryRequest = Body(...)
 ):
     # Validate query
-    if not query.strip():
+    if not query_data.query.strip():
         raise HTTPException(status_code=400, detail="Query cannot be empty")
-    if len(query) > 1000:
-        raise HTTPException(status_code=400, detail="Query cannot exceed 1000 characters")
-    
-    # Validate language codes
-    supported_languages = ["kan_Knda", "hin_Deva", "tam_Taml", "eng_Latn"]  # Add more as needed
-    if src_lang not in supported_languages:
-        raise HTTPException(status_code=400, detail=f"Unsupported source language: {src_lang}. Must be one of {supported_languages}")
-    if tgt_lang not in supported_languages:
-        raise HTTPException(status_code=400, detail=f"Unsupported target language: {tgt_lang}. Must be one of {supported_languages}")
     
     logger.info("Processing visual query request", extra={
         "endpoint": "/v1/indic_visual_query",
-        "query_length": len(query),
+        "query_length": len(query_data.query),
         "file_name": file.filename,
         "client_ip": request.client.host,
-        "src_lang": src_lang,
-        "tgt_lang": tgt_lang,
-        "model": model
+        "src_lang": query_data.src_lang,
+        "tgt_lang": query_data.tgt_lang,
+        "model": query_data.model
     })
     
     external_url = f"{os.getenv('DWANI_API_BASE_URL_VISION')}/indic-visual-query/"
@@ -478,10 +466,10 @@ async def visual_query(
         file_content = await file.read()
         files = {"file": (file.filename, file_content, file.content_type)}
         data = {
-            "prompt": query,
-            "source_language": src_lang,
-            "target_language": tgt_lang,
-            "model": model
+            "prompt": query_data.query,
+            "source_language": query_data.src_lang,
+            "target_language": query_data.tgt_lang,
+            "model": query_data.model
         }
         
         response = requests.post(
@@ -512,7 +500,6 @@ async def visual_query(
     except ValueError as e:
         logger.error(f"Invalid JSON response: {str(e)}")
         raise HTTPException(status_code=500, detail="Invalid response format from visual query service")
-
 
 from enum import Enum
 

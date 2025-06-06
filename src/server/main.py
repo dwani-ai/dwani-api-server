@@ -28,6 +28,9 @@ app = FastAPI(
     ],
 )
 
+# Supported models
+SUPPORTED_MODELS = ["gemma3", "moondream", "qwen2.5vl", "qwen3", "sarvam-m", "deepseek-r1"]
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[ "https://*.hf.space",
@@ -527,7 +530,7 @@ async def visual_query(
         logger.error(f"Invalid JSON response: {str(e)}")
         raise HTTPException(status_code=500, detail="Invalid response format from visual query service")
 
-    
+
 from enum import Enum
 
 class SupportedLanguage(str, Enum):

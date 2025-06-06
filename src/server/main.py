@@ -31,6 +31,71 @@ app = FastAPI(
 # Supported models
 SUPPORTED_MODELS = ["gemma3", "moondream", "qwen2.5vl", "qwen3", "sarvam-m", "deepseek-r1"]
 
+# Pydantic models (updated to include model validation)
+class VisualQueryRequest(BaseModel):
+    query: str = Field(..., description="Text query", max_length=1000)
+    src_lang: str = Field(..., description="Source language code")
+    tgt_lang: str = Field(..., description="Target language code")
+    model: str = Field(default="gemma3", description="LLM model", enum=SUPPORTED_MODELS)
+
+    class Config:
+        schema_extra = {
+            "example": {
+                "query": "Describe the image",
+                "src_lang": "eng_Latn",
+                "tgt_lang": "kan_Knda",
+                "model": "moondream"
+            }
+        }
+
+class VisualQueryResponse(BaseModel):
+    answer: str
+
+    class Config:
+        schema_extra = {"example": {"answer": "The image shows a screenshot of a webpage."}}
+
+class PDFTextExtractionResponse(BaseModel):
+    page_content: str = Field(..., description="Extracted text from the specified PDF page")
+
+    class Config:
+        schema_extra = {
+            "example": {
+                "page_content": "Google Interview Preparation Guide\nCustomer Engineer Specialist\n\nOur hiring process\n..."
+            }
+        }
+
+
+class DocumentProcessPage(BaseModel):
+    processed_page: int = Field(..., description="Page number of the extracted text")
+    page_content: str = Field(..., description="Extracted text from the page")
+    translated_content: Optional[str] = Field(None, description="Translated text of the page, if applicable")
+
+class DocumentProcessResponse(BaseModel):
+    pages: List[DocumentProcessPage] = Field(..., description="List of pages with extracted and translated text")
+
+class SummarizePDFResponse(BaseModel):
+    original_text: str = Field(..., description="Extracted text from the specified page")
+    summary: str = Field(..., description="Summary of the specified page")
+    processed_page: int = Field(..., description="Page number processed")
+
+class IndicSummarizePDFResponse(BaseModel):
+    original_text: str = Field(..., description="Extracted text from the specified page")
+    summary: str = Field(..., description="Summary of the specified page in the source language")
+    translated_summary: str = Field(..., description="Summary translated into the target language")
+    processed_page: int = Field(..., description="Page number processed")
+
+class CustomPromptPDFResponse(BaseModel):
+    original_text: str = Field(..., description="Extracted text from the specified page")
+    response: str = Field(..., description="Response based on the custom prompt")
+    processed_page: int = Field(..., description="Page number processed")
+
+class IndicCustomPromptPDFResponse(BaseModel):
+    original_text: str = Field(..., description="Extracted text from the specified page")
+    response: str = Field(..., description="Response based on the custom prompt")
+    translated_response: str = Field(..., description="Translated response in the target language")
+    processed_page: int = Field(..., description="Page number processed")
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[ "https://*.hf.space",
@@ -122,6 +187,10 @@ class VisualQueryRequest(BaseModel):
 
 class VisualQueryResponse(BaseModel):
     answer: str
+
+    class Config:
+        schema_extra = {"example": {"answer": "The image shows a screenshot of a webpage."}}
+
 
 # TTS Service Interface
 class TTSService(ABC):
@@ -603,16 +672,6 @@ async def speech_to_speech(
 Upgrading system to use Vllm server
 '''
 
-class PDFTextExtractionResponse(BaseModel):
-    page_content: str = Field(..., description="Extracted text from the specified PDF page")
-
-    class Config:
-        schema_extra = {
-            "example": {
-                "page_content": "Google Interview Preparation Guide\nCustomer Engineer Specialist\n\nOur hiring process\n..."
-            }
-        }
-
 # Extract Text Endpoint
 @app.post("/v1/extract-text",
           response_model=PDFTextExtractionResponse,
@@ -682,36 +741,6 @@ async def extract_text(
         logger.error(f"Invalid JSON response from external API: {str(e)}")
         raise HTTPException(status_code=500, detail="Invalid response format from external API")
 
-
-class DocumentProcessPage(BaseModel):
-    processed_page: int = Field(..., description="Page number of the extracted text")
-    page_content: str = Field(..., description="Extracted text from the page")
-    translated_content: Optional[str] = Field(None, description="Translated text of the page, if applicable")
-
-    class Config:
-        schema_extra = {
-            "example": {
-                "processed_page": 1,
-                "page_content": "Okay, here's a plain text representation of the document...",
-                "translated_content": "ಸರಿ, ಇಲ್ಲಿ ಡಾಕ್ಯುಮೆಂಟ್ನ ಸರಳ ಪಠ್ಯ ಪ್ರಾತಿನಿಧ್ಯವಿದೆ..."
-            }
-        }
-
-class DocumentProcessResponse(BaseModel):
-    pages: List[DocumentProcessPage] = Field(..., description="List of pages with extracted and translated text")
-
-    class Config:
-        schema_extra = {
-            "example": {
-                "pages": [
-                    {
-                        "processed_page": 1,
-                        "page_content": "Okay, here's a plain text representation of the document...\n\n**Electronic Reservation Slip (ERS) - Normal User**\n...",
-                        "translated_content": "ಸರಿ, ಇಲ್ಲಿ ಡಾಕ್ಯುಮೆಂಟ್ನ ಸರಳ ಪಠ್ಯ ಪ್ರಾತಿನಿಧ್ಯವಿದೆ...\n\n**ಎಲೆಕ್ಟ್ರಾನಿಕ್ ಮೀಸಲಾತಿ ಸ್ಲಿಪ್ (ಇಆರ್ಎಸ್) - ಸಾಮಾನ್ಯ ಬಳಕೆದಾರ**\n..."
-                    }
-                ]
-            }
-        }
 
 # Indic Extract Text Endpoint
 @app.post("/v1/indic-extract-text/",
@@ -802,21 +831,6 @@ async def extract_and_translate(
     finally:
         await file.close()
 
-
-class SummarizePDFResponse(BaseModel):
-    original_text: str = Field(..., description="Extracted text from the specified page")
-    summary: str = Field(..., description="Summary of the specified page")
-    processed_page: int = Field(..., description="Page number processed")
-
-    class Config:
-        schema_extra = {
-            "example": {
-                "original_text": "Okay, here's a plain text representation of the document...\n\nElectronic Reservation Slip (ERS)...",
-                "summary": "This ERS details a sleeper class train booking (17307/Basava Express) from KSR Bengaluru to Kalaburagi...",
-                "processed_page": 1
-            }
-        }
-
 # Summarize PDF Endpoint
 @app.post("/v1/summarize-pdf",
           response_model=SummarizePDFResponse,
@@ -897,21 +911,6 @@ async def summarize_pdf(
         logger.error(f"Invalid JSON response from external API: {str(e)}")
         raise HTTPException(status_code=500, detail="Invalid response format from external API")
 
-class IndicSummarizePDFResponse(BaseModel):
-    original_text: str = Field(..., description="Extracted text from the specified page")
-    summary: str = Field(..., description="Summary of the specified page in the source language")
-    translated_summary: str = Field(..., description="Summary translated into the target language")
-    processed_page: int = Field(..., description="Page number processed")
-
-    class Config:
-        schema_extra = {
-            "example": {
-                "original_text": "Okay, here's a plain text representation of the document...\n\nElectronic Reservation Slip (ERS)...",
-                "summary": "This ERS details a Sleeper Class train booking for passenger Anand on Train 17307 (Basava Express)...",
-                "translated_summary": "ಎಲೆಕ್ಟ್ರಾನಿಕ್ ಮೀಸಲಾತಿ ಸ್ಲಿಪ್ (ಇಆರ್ಎಸ್) ನ 4-ವಾಕ್ಯಗಳ ಸಾರಾಂಶ ಹೀಗಿದೆ...",
-                "processed_page": 1
-            }
-        }
 
 # Indic Summarize PDF Endpoint
 @app.post("/v1/indic-summarize-pdf",
@@ -1010,22 +1009,6 @@ async def indic_summarize_pdf(
         raise HTTPException(status_code=500, detail="Invalid response format from external API")
 
 
-
-class CustomPromptPDFResponse(BaseModel):
-    original_text: str = Field(..., description="Extracted text from the specified page")
-    response: str = Field(..., description="Response based on the custom prompt")
-    processed_page: int = Field(..., description="Page number processed")
-
-    class Config:
-        schema_extra = {
-            "example": {
-                "original_text": "Okay, here's a plain text representation of the document...\n\n**Clevertronic**\nBestellnummer: 801772347...",
-                "response": "Okay, here’s a list of the key points from the document:\n* Company Information: Clevertronic GmbH...",
-                "processed_page": 1
-            }
-        }
-
-
 # Custom Prompt PDF Endpoint
 @app.post("/v1/custom-prompt-pdf",
           response_model=CustomPromptPDFResponse,
@@ -1110,22 +1093,6 @@ async def custom_prompt_pdf(
         logger.error(f"Invalid JSON response from external API: {str(e)}")
         raise HTTPException(status_code=500, detail="Invalid response format from external API")
 
-
-class IndicCustomPromptPDFResponse(BaseModel):
-    original_text: str = Field(..., description="Extracted text from the specified page")
-    response: str = Field(..., description="Response based on the custom prompt")
-    translated_response: str = Field(..., description="Translated response in the target language")
-    processed_page: int = Field(..., description="Page number processed")
-
-    class Config:
-        schema_extra = {
-            "example": {
-                "original_text": "Okay, here's a plain text representation of the document...\n\n**Clevertronic. Voll. Venture GmbH**...",
-                "response": "Okay, here’s a list of key points from the document:\n* Company Information: Clevertronic. Voll. Venture GmbH...",
-                "translated_response": "ಸರಿ, ಡಾಕ್ಯುಮೆಂಟ್ನ ಪ್ರಮುಖ ಅಂಶಗಳ ಪಟ್ಟಿ ಹೀಗಿದೆ...\n* ಕಂಪನಿ ಮಾಹಿತಿ: ಕ್ಲೆವರ್ಟ್ರಾನಿಕ್. ಮತಪತ್ರ. ವೆಂಚರ್ ಜಿಎಂಬಿಎಚ್...",
-                "processed_page": 1
-            }
-        }
 
 # Indic Custom Prompt PDF Endpoint
 @app.post("/v1/indic-custom-prompt-pdf",

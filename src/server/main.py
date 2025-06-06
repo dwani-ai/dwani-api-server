@@ -447,7 +447,7 @@ async def visual_query(
     file: UploadFile = File(..., description="Image file to analyze (e.g., PNG, JPEG)"),
     src_lang: str = Query(..., description="Source language code (e.g., kan_Knda, en)"),
     tgt_lang: str = Query(..., description="Target language code (e.g., kan_Knda, en)"),
-    model: str = Field(default="gemma3", description="LLM model")
+    model: str = Form(default="gemma3", description="LLM model")
 ):
     # Validate query
     if not query.strip():

@@ -430,6 +430,14 @@ class VisualQueryResponse(BaseModel):
     class Config:
         schema_extra = {"example": {"answer": "The image shows a screenshot of a webpage."}}
 # Updated Visual Query Endpoint
+
+# Helper function for model selection
+def validate_model(model: str) -> str:
+    if model not in SUPPORTED_MODELS:
+        raise HTTPException(status_code=400, detail=f"Invalid model: {model}. Must be one of {SUPPORTED_MODELS}")
+    return model
+
+# Visual Query Endpoint
 @app.post("/v1/indic_visual_query",
           response_model=VisualQueryResponse,
           summary="Visual Query with Image",
@@ -437,7 +445,7 @@ class VisualQueryResponse(BaseModel):
           tags=["Chat"],
           responses={
               200: {"description": "Query response", "model": VisualQueryResponse},
-              400: {"description": "Invalid query or language codes"},
+              400: {"description": "Invalid query, image, or language codes"},
               422: {"description": "Validation error in request body"},
               504: {"description": "Visual query service timeout"}
           })
@@ -447,7 +455,7 @@ async def visual_query(
     file: UploadFile = File(..., description="Image file to analyze (PNG only)"),
     src_lang: str = Query(..., description="Source language code (e.g., eng_Latn, kan_Knda)"),
     tgt_lang: str = Query(..., description="Target language code (e.g., eng_Latn, kan_Knda)"),
-    model: str = Query(default="gemma3", description="LLM model", enum=["gemma3", "moondream", "qwen2.5vl", "qwen3", "sarvam-m", "deepseek-r1"])
+    model: str = Query(default="gemma3", description="LLM model", enum=SUPPORTED_MODELS)
 ):
     # Validate query
     if not query.strip():
@@ -461,6 +469,9 @@ async def visual_query(
         raise HTTPException(status_code=400, detail=f"Unsupported source language: {src_lang}. Must be one of {supported_languages}")
     if tgt_lang not in supported_languages:
         raise HTTPException(status_code=400, detail=f"Unsupported target language: {tgt_lang}. Must be one of {supported_languages}")
+
+    # Validate model
+    validate_model(model)
 
     logger.info("Processing visual query request", extra={
         "endpoint": "/v1/indic_visual_query",
@@ -515,6 +526,7 @@ async def visual_query(
     except ValueError as e:
         logger.error(f"Invalid JSON response: {str(e)}")
         raise HTTPException(status_code=500, detail="Invalid response format from visual query service")
+
     
 from enum import Enum
 
@@ -598,7 +610,8 @@ class PDFTextExtractionResponse(BaseModel):
             }
         }
 
-@app.post("/v1/extract-text", 
+# Extract Text Endpoint
+@app.post("/v1/extract-text",
           response_model=PDFTextExtractionResponse,
           summary="Extract Text from PDF",
           description="Extract text from a specified page of a PDF file by calling an external API.",
@@ -612,42 +625,50 @@ class PDFTextExtractionResponse(BaseModel):
 async def extract_text(
     request: Request,
     file: UploadFile = File(..., description="PDF file to extract text from"),
-    page_number: int = Query(1, description="Page number to extract text from (1-based indexing)")
+    page_number: int = Query(1, description="Page number to extract text from (1-based indexing)", ge=1),
+    model: str = Query(default="gemma3", description="LLM model", enum=SUPPORTED_MODELS)
 ):
-    # Validate page number
+    if not file.filename.lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="Only PDF files supported")
     if page_number < 1:
         raise HTTPException(status_code=400, detail="Page number must be at least 1")
-    
+
+    validate_model(model)
+
     logger.debug("Processing PDF text extraction request", extra={
         "endpoint": "/v1/extract-text",
         "file_name": file.filename,
         "page_number": page_number,
+        "model": model,
         "client_ip": request.client.host
     })
-    
+
+    external_url = f"{os.getenv('DWANI_API_BASE_URL_PDF')}/extract-text/"
     start_time = time()
+
     try:
         file_content = await file.read()
         files = {"file": (file.filename, file_content, file.content_type)}
-        
-        external_url = f"{os.getenv('DWANI_API_BASE_URL_PDF')}/extract-text/?page_number={page_number}"
+        data = {"page_number": page_number, "model": model}
+
         response = requests.post(
             external_url,
             files=files,
+            data=data,
             headers={"accept": "application/json"},
             timeout=60
         )
         response.raise_for_status()
-        
+
         response_data = response.json()
         extracted_text = response_data.get("page_content", "")
         if not extracted_text:
             logger.warning("No page_content found in external API response")
             extracted_text = ""
-        
+
         logger.debug(f"PDF text extraction completed in {time() - start_time:.2f} seconds")
         return PDFTextExtractionResponse(page_content=extracted_text.strip())
-    
+
     except requests.Timeout:
         logger.error("External PDF extraction API timed out")
         raise HTTPException(status_code=504, detail="External API timeout")
@@ -689,76 +710,92 @@ class DocumentProcessResponse(BaseModel):
             }
         }
 
-@app.post("/v1/indic-extract-text/", response_model=DocumentProcessResponse, tags=["PDF"])
+# Indic Extract Text Endpoint
+@app.post("/v1/indic-extract-text/",
+          response_model=DocumentProcessResponse,
+          summary="Extract and Translate Text from PDF",
+          description="Extract text from a PDF page and translate it into the target language.",
+          tags=["PDF"],
+          responses={
+              200: {"description": "Extracted and translated text", "model": DocumentProcessResponse},
+              400: {"description": "Invalid PDF, page number, or language codes"},
+              500: {"description": "External API error"},
+              504: {"description": "External API timeout"}
+          })
 async def extract_and_translate(
+    request: Request,
     file: UploadFile = File(...),
-    page_number: int = 1,
-    src_lang: str = "eng_Latn",
-    tgt_lang: str = "kan_Knda"
+    page_number: int = Form(1, description="Page number to extract text from (1-based indexing)", ge=1),
+    src_lang: str = Form("eng_Latn", description="Source language code (e.g., eng_Latn)"),
+    tgt_lang: str = Form("kan_Knda", description="Target language code (e.g., kan_Knda)"),
+    model: str = Form(default="gemma3", description="LLM model", enum=SUPPORTED_MODELS)
 ):
-    """
-    FastAPI endpoint to call the indic-extract-text API, extract text from a PDF,
-    and return the page content and translated content in the specified format.
-    """
+    if not file.filename.lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="Only PDF files supported")
+    if page_number < 1:
+        raise HTTPException(status_code=400, detail="Page number must be at least 1")
+
+    supported_languages = ["kan_Knda", "hin_Deva", "tam_Taml", "tel_Telu", "eng_Latn"]
+    if src_lang not in supported_languages or tgt_lang not in supported_languages:
+        raise HTTPException(status_code=400, detail=f"Invalid language codes: src={src_lang}, tgt={tgt_lang}")
+
+    validate_model(model)
+
+    logger.debug("Processing indic extract text request", extra={
+        "endpoint": "/v1/indic-extract-text",
+        "file_name": file.filename,
+        "page_number": page_number,
+        "src_lang": src_lang,
+        "tgt_lang": tgt_lang,
+        "model": model,
+        "client_ip": request.client.host
+    })
+
+    external_url = f"{os.getenv('DWANI_API_BASE_URL_PDF')}/indic-extract-text/"
+
     try:
-        # Validate file type
-        if not file.filename.endswith(".pdf"):
-            raise HTTPException(status_code=400, detail="Only PDF files are supported")
-
-        # Prepare the API URL and headers
-
-        url = f"{os.getenv('DWANI_API_BASE_URL_PDF')}/indic-extract-text/"
-        
-        headers = {
-            "accept": "application/json"
-        }
-
-        # Prepare form data
-        files = {
-            "file": (file.filename, await file.read(), "application/pdf")
-        }
+        file_content = await file.read()
+        files = {"file": (file.filename, file_content, "application/pdf")}
         data = {
-            "page_number": str(page_number),
+            "page_number": page_number,
             "src_lang": src_lang,
-            "tgt_lang": tgt_lang
+            "tgt_lang": tgt_lang,
+            "model": model
         }
 
-        # Make the POST request to the external API
-        response = requests.post(url, headers=headers, files=files, data=data)
+        response = requests.post(
+            external_url,
+            files=files,
+            data=data,
+            headers={"accept": "application/json"},
+            timeout=60
+        )
+        response.raise_for_status()
 
-        # Check for successful response
-        if response.status_code != 200:
-            raise HTTPException(
-                status_code=response.status_code,
-                detail=f"External API error: {response.text}"
-            )
+        response_data = response.json()
+        page_content = response_data.get("page_content", "")
+        translated_content = response_data.get("translated_content", "")
+        processed_page = response_data.get("processed_page", page_number)
 
-        # Parse the API response
-        api_response = response.json()
-
-        # Assuming the external API returns 'page_content' and 'translated_content'
-        # Adjust these keys based on the actual API response structure
-        page_content = api_response.get("page_content", "")
-        translated_content = api_response.get("translated_content", "")
-
-        # Create a DocumentProcessPage instance
         page = DocumentProcessPage(
-            processed_page=page_number,
+            processed_page=processed_page,
             page_content=page_content,
             translated_content=translated_content
         )
 
-        # Wrap the page in DocumentProcessResponse
-        result = DocumentProcessResponse(pages=[page])
+        logger.debug(f"Indic extract text completed in {time() - start_time:.2f} seconds")
+        return DocumentProcessResponse(pages=[page])
 
-        return result
-
+    except requests.Timeout:
+        logger.error("External indic extract text API timed out")
+        raise HTTPException(status_code=504, detail="External API timeout")
     except requests.RequestException as e:
-        raise HTTPException(status_code=500, detail=f"Error calling external API: {str(e)}")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        logger.error(f"External indic extract text API error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"External API error: {str(e)}")
+    except ValueError as e:
+        logger.error(f"Invalid JSON response from external API: {str(e)}")
+        raise HTTPException(status_code=500, detail="Invalid response format from external API")
     finally:
-        # Close the uploaded file
         await file.close()
 
 
@@ -776,13 +813,14 @@ class SummarizePDFResponse(BaseModel):
             }
         }
 
+# Summarize PDF Endpoint
 @app.post("/v1/summarize-pdf",
           response_model=SummarizePDFResponse,
           summary="Summarize a Specific Page of a PDF",
           description="Summarize the content of a specific page of a PDF file using an external API.",
           tags=["PDF"],
           responses={
-              200: {"description": "Extracted text and summary of the specified page", "model": SummarizePDFResponse},
+              200: {"description": "Extracted text and summary", "model": SummarizePDFResponse},
               400: {"description": "Invalid PDF or page number"},
               500: {"description": "External API error"},
               504: {"description": "External API timeout"}
@@ -790,20 +828,21 @@ class SummarizePDFResponse(BaseModel):
 async def summarize_pdf(
     request: Request,
     file: UploadFile = File(..., description="PDF file to summarize"),
-    page_number: int = Form(..., description="Page number to summarize (1-based indexing)")
+    page_number: int = Form(..., description="Page number to summarize (1-based indexing)", ge=1),
+    model: str = Form(default="gemma3", description="LLM model", enum=SUPPORTED_MODELS)
 ):
-    # Validate file
-    if not file.filename.lower().endswith('.pdf'):
+    if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="File must be a PDF")
-
-    # Validate page number
     if page_number < 1:
         raise HTTPException(status_code=400, detail="Page number must be at least 1")
 
+    validate_model(model)
+
     logger.debug("Processing PDF summary request", extra={
-        "endpoint": "/summarize-pdf",
+        "endpoint": "/v1/summarize-pdf",
         "file_name": file.filename,
         "page_number": page_number,
+        "model": model,
         "client_ip": request.client.host
     })
 
@@ -813,7 +852,7 @@ async def summarize_pdf(
     try:
         file_content = await file.read()
         files = {"file": (file.filename, file_content, "application/pdf")}
-        data = {"page_number": page_number}
+        data = {"page_number": page_number, "model": model}
 
         response = requests.post(
             external_url,
@@ -837,7 +876,7 @@ async def summarize_pdf(
                 processed_page=processed_page
             )
 
-        logger.debug(f"PDF summary completed in {time() - start_time:.2f} seconds, page processed: {processed_page}, summary length: {len(summary)}")
+        logger.debug(f"PDF summary completed in {time() - start_time:.2f} seconds")
         return SummarizePDFResponse(
             original_text=original_text,
             summary=summary,
@@ -853,7 +892,6 @@ async def summarize_pdf(
     except ValueError as e:
         logger.error(f"Invalid JSON response from external API: {str(e)}")
         raise HTTPException(status_code=500, detail="Invalid response format from external API")
-
 
 class IndicSummarizePDFResponse(BaseModel):
     original_text: str = Field(..., description="Extracted text from the specified page")
@@ -871,13 +909,14 @@ class IndicSummarizePDFResponse(BaseModel):
             }
         }
 
+# Indic Summarize PDF Endpoint
 @app.post("/v1/indic-summarize-pdf",
           response_model=IndicSummarizePDFResponse,
           summary="Summarize and Translate a Specific Page of a PDF",
-          description="Summarize the content of a specific page of a PDF file and translate the summary into the target language using an external API.",
+          description="Summarize a PDF page and translate the summary into the target language.",
           tags=["PDF"],
           responses={
-              200: {"description": "Extracted text, summary, and translated summary of the specified page", "model": IndicSummarizePDFResponse},
+              200: {"description": "Extracted text, summary, and translated summary", "model": IndicSummarizePDFResponse},
               400: {"description": "Invalid PDF, page number, or language codes"},
               500: {"description": "External API error"},
               504: {"description": "External API timeout"}
@@ -885,35 +924,29 @@ class IndicSummarizePDFResponse(BaseModel):
 async def indic_summarize_pdf(
     request: Request,
     file: UploadFile = File(..., description="PDF file to summarize"),
-    page_number: int = Form(..., description="Page number to summarize (1-based indexing)"),
+    page_number: int = Form(..., description="Page number to summarize (1-based indexing)", ge=1),
     src_lang: str = Form(..., description="Source language code (e.g., eng_Latn)"),
-    tgt_lang: str = Form(..., description="Target language code (e.g., kan_Knda)")
+    tgt_lang: str = Form(..., description="Target language code (e.g., kan_Knda)"),
+    model: str = Form(default="gemma3", description="LLM model", enum=SUPPORTED_MODELS)
 ):
-    # Validate file
-    if not file.filename.lower().endswith('.pdf'):
+    if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="File must be a PDF")
-
-    # Validate page number
     if page_number < 1:
         raise HTTPException(status_code=400, detail="Page number must be at least 1")
 
-    # Validate language codes
-    supported_languages = [
-        "eng_Latn", "hin_Deva", "kan_Knda", "tam_Taml", "mal_Mlym", "tel_Telu",
-        "deu_Latn", "fra_Latn", "nld_Latn", "spa_Latn", "ita_Latn", "por_Latn",
-        "rus_Cyrl", "pol_Latn"
-    ]
-    if src_lang not in supported_languages:
-        raise HTTPException(status_code=400, detail=f"Unsupported source language: {src_lang}. Must be one of {supported_languages}")
-    if tgt_lang not in supported_languages:
-        raise HTTPException(status_code=400, detail=f"Unsupported target language: {tgt_lang}. Must be one of {supported_languages}")
+    supported_languages = ["kan_Knda", "hin_Deva", "tam_Taml", "tel_Telu", "eng_Latn"]
+    if src_lang not in supported_languages or tgt_lang not in supported_languages:
+        raise HTTPException(status_code=400, detail=f"Invalid language codes: src={src_lang}, tgt={tgt_lang}")
 
-    logger.debug("Processing Indic PDF summary request", extra={
-        "endpoint": "/indic-summarize-pdf",
+    validate_model(model)
+
+    logger.debug("Processing indic summarize PDF request", extra={
+        "endpoint": "/v1/indic-summarize-pdf",
         "file_name": file.filename,
         "page_number": page_number,
         "src_lang": src_lang,
         "tgt_lang": tgt_lang,
+        "model": model,
         "client_ip": request.client.host
     })
 
@@ -926,7 +959,8 @@ async def indic_summarize_pdf(
         data = {
             "page_number": page_number,
             "src_lang": src_lang,
-            "tgt_lang": tgt_lang
+            "tgt_lang": tgt_lang,
+            "model": model
         }
 
         response = requests.post(
@@ -953,7 +987,7 @@ async def indic_summarize_pdf(
                 processed_page=processed_page
             )
 
-        logger.debug(f"Indic PDF summary completed in {time() - start_time:.2f} seconds, page processed: {processed_page}, summary length: {len(summary)}, translated summary length: {len(translated_summary)}")
+        logger.debug(f"Indic summarize PDF completed in {time() - start_time:.2f} seconds")
         return IndicSummarizePDFResponse(
             original_text=original_text,
             summary=summary,
@@ -962,14 +996,15 @@ async def indic_summarize_pdf(
         )
 
     except requests.Timeout:
-        logger.error("External Indic PDF summary API timed out")
+        logger.error("External indic summarize PDF API timed out")
         raise HTTPException(status_code=504, detail="External API timeout")
     except requests.RequestException as e:
-        logger.error(f"External Indic PDF summary API error: {str(e)}")
+        logger.error(f"External indic summarize PDF API error: {str(e)}")
         raise HTTPException(status_code=500, detail=f"External API error: {str(e)}")
     except ValueError as e:
         logger.error(f"Invalid JSON response from external API: {str(e)}")
         raise HTTPException(status_code=500, detail="Invalid response format from external API")
+
 
 
 class CustomPromptPDFResponse(BaseModel):
@@ -987,40 +1022,40 @@ class CustomPromptPDFResponse(BaseModel):
         }
 
 
+# Custom Prompt PDF Endpoint
 @app.post("/v1/custom-prompt-pdf",
-             response_model=CustomPromptPDFResponse,
-             summary="Process a PDF with a Custom Prompt",
-             description="Extract text from a specific page of a PDF and process it with a custom prompt using an external API.",
-             tags=["PDF"],
-             responses={
-                 200: {"description": "Extracted text and custom prompt response for the specified page", "model": CustomPromptPDFResponse},
-                 400: {"description": "Invalid PDF, page number, or prompt"},
-                 500: {"description": "External API error"},
-                 504: {"description": "External API timeout"}
-             })
+          response_model=CustomPromptPDFResponse,
+          summary="Process a PDF with a Custom Prompt",
+          description="Extract text from a PDF page and process it with a custom prompt.",
+          tags=["PDF"],
+          responses={
+              200: {"description": "Extracted text and custom prompt response", "model": CustomPromptPDFResponse},
+              400: {"description": "Invalid PDF, page number, or prompt"},
+              500: {"description": "External API error"},
+              504: {"description": "External API timeout"}
+          })
 async def custom_prompt_pdf(
     request: Request,
     file: UploadFile = File(..., description="PDF file to process"),
-    page_number: int = Form(..., description="Page number to process (1-based indexing)"),
-    prompt: str = Form(..., description="Custom prompt to process the page content")
+    page_number: int = Form(..., description="Page number to process (1-based indexing)", ge=1),
+    prompt: str = Form(..., description="Custom prompt to process the page content"),
+    model: str = Form(default="gemma3", description="LLM model", enum=SUPPORTED_MODELS)
 ):
-    # Validate file
-    if not file.filename.lower().endswith('.pdf'):
+    if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="File must be a PDF")
-
-    # Validate page number
     if page_number < 1:
         raise HTTPException(status_code=400, detail="Page number must be at least 1")
-
-    # Validate prompt
     if not prompt.strip():
         raise HTTPException(status_code=400, detail="Prompt cannot be empty")
 
+    validate_model(model)
+
     logger.debug("Processing custom prompt PDF request", extra={
-        "endpoint": "/custom-prompt-pdf",
+        "endpoint": "/v1/custom-prompt-pdf",
         "file_name": file.filename,
         "page_number": page_number,
-        "prompt": prompt,
+        "prompt_length": len(prompt),
+        "model": model,
         "client_ip": request.client.host
     })
 
@@ -1030,7 +1065,7 @@ async def custom_prompt_pdf(
     try:
         file_content = await file.read()
         files = {"file": (file.filename, file_content, "application/pdf")}
-        data = {"page_number": page_number, "prompt": prompt}
+        data = {"page_number": page_number, "prompt": prompt, "model": model}
 
         response = requests.post(
             external_url,
@@ -1054,7 +1089,7 @@ async def custom_prompt_pdf(
                 processed_page=processed_page
             )
 
-        logger.debug(f"Custom prompt PDF processing completed in {time() - start_time:.2f} seconds, page processed: {processed_page}, response length: {len(custom_response)}")
+        logger.debug(f"Custom prompt PDF completed in {time() - start_time:.2f} seconds")
         return CustomPromptPDFResponse(
             original_text=original_text,
             response=custom_response,
@@ -1088,49 +1123,48 @@ class IndicCustomPromptPDFResponse(BaseModel):
             }
         }
 
-
+# Indic Custom Prompt PDF Endpoint
 @app.post("/v1/indic-custom-prompt-pdf",
-             response_model=IndicCustomPromptPDFResponse,
-             summary="Process a PDF with a Custom Prompt and Translation",
-             description="Extract text from a specific page of a PDF, process it with a custom prompt, and translate the response into a target language using an external API.",
-             tags=["PDF"],
-             responses={
-                 200: {"description": "Extracted text, custom prompt response, and translated response for the specified page", "model": IndicCustomPromptPDFResponse},
-                 400: {"description": "Invalid PDF, page number, prompt, or language codes"},
-                 500: {"description": "External API error"},
-                 504: {"description": "External API timeout"}
-             })
+          response_model=IndicCustomPromptPDFResponse,
+          summary="Process a PDF with a Custom Prompt and Translation",
+          description="Extract text from a PDF page, process it with a custom prompt, and translate the response.",
+          tags=["PDF"],
+          responses={
+              200: {"description": "Extracted text, custom prompt response, and translated response", "model": IndicCustomPromptPDFResponse},
+              400: {"description": "Invalid PDF, page number, prompt, or language codes"},
+              500: {"description": "External API error"},
+              504: {"description": "External API timeout"}
+          })
 async def indic_custom_prompt_pdf(
     request: Request,
     file: UploadFile = File(..., description="PDF file to process"),
-    page_number: int = Form(..., description="Page number to process (1-based indexing)"),
+    page_number: int = Form(..., description="Page number to process (1-based indexing)", ge=1),
     prompt: str = Form(..., description="Custom prompt to process the page content"),
-    source_language: str = Form(..., description="Source language code (e.g., eng_Latn)"),
-    target_language: str = Form(..., description="Target language code (e.g., kan_Knda)")
+    src_lang: str = Form(..., description="Source language code (e.g., eng_Latn)"),
+    tgt_lang: str = Form(..., description="Target language code (e.g., kan_Knda)"),
+    model: str = Form(default="gemma3", description="LLM model", enum=SUPPORTED_MODELS)
 ):
-    # Validate file
-    if not file.filename.lower().endswith('.pdf'):
+    if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="File must be a PDF")
-
-    # Validate page number
     if page_number < 1:
         raise HTTPException(status_code=400, detail="Page number must be at least 1")
-
-    # Validate prompt
     if not prompt.strip():
         raise HTTPException(status_code=400, detail="Prompt cannot be empty")
 
-    # Validate language codes (basic check for non-empty)
-    if not source_language.strip() or not target_language.strip():
-        raise HTTPException(status_code=400, detail="Source and target language codes cannot be empty")
+    supported_languages = ["kan_Knda", "hin_Deva", "tam_Taml", "tel_Telu", "eng_Latn"]
+    if src_lang not in supported_languages or tgt_lang not in supported_languages:
+        raise HTTPException(status_code=400, detail=f"Invalid language codes: src={src_lang}, tgt={tgt_lang}")
+
+    validate_model(model)
 
     logger.debug("Processing indic custom prompt PDF request", extra={
-        "endpoint": "/indic-custom-prompt-pdf",
+        "endpoint": "/v1/indic-custom-prompt-pdf",
         "file_name": file.filename,
         "page_number": page_number,
-        "prompt": prompt,
-        "source_language": source_language,
-        "target_language": target_language,
+        "prompt_length": len(prompt),
+        "src_lang": src_lang,
+        "tgt_lang": tgt_lang,
+        "model": model,
         "client_ip": request.client.host
     })
 
@@ -1143,8 +1177,9 @@ async def indic_custom_prompt_pdf(
         data = {
             "page_number": page_number,
             "prompt": prompt,
-            "source_language": source_language,
-            "target_language": target_language
+            "source_language": src_lang,
+            "target_language": tgt_lang,
+            "model": model
         }
 
         response = requests.post(
@@ -1163,10 +1198,7 @@ async def indic_custom_prompt_pdf(
         processed_page = response_data.get("processed_page", page_number)
 
         if not original_text or not custom_response or not translated_response:
-            logger.warning(f"Incomplete response from external API: "
-                          f"original_text={'present' if original_text else 'missing'}, "
-                          f"response={'present' if custom_response else 'missing'}, "
-                          f"translated_response={'present' if translated_response else 'missing'}")
+            logger.warning(f"Incomplete response from external API: original_text={'present' if original_text else 'missing'}, response={'present' if custom_response else 'missing'}, translated_response={'present' if translated_response else 'missing'}")
             return IndicCustomPromptPDFResponse(
                 original_text=original_text or "No text extracted",
                 response=custom_response or "No response provided",
@@ -1174,9 +1206,7 @@ async def indic_custom_prompt_pdf(
                 processed_page=processed_page
             )
 
-        logger.debug(f"Indic custom prompt PDF processing completed in {time() - start_time:.2f} seconds, "
-                    f"page processed: {processed_page}, response length: {len(custom_response)}, "
-                    f"translated response length: {len(translated_response)}")
+        logger.debug(f"Indic custom prompt PDF completed in {time() - start_time:.2f} seconds")
         return IndicCustomPromptPDFResponse(
             original_text=original_text,
             response=custom_response,
@@ -1193,6 +1223,7 @@ async def indic_custom_prompt_pdf(
     except ValueError as e:
         logger.error(f"Invalid JSON response from external API: {str(e)}")
         raise HTTPException(status_code=500, detail="Invalid response format from external API")
+
 
 @app.post("/v1/indic-custom-prompt-kannada-pdf",
           summary="Generate Kannada PDF with Custom Prompt",

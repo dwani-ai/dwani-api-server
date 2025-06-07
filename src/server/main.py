@@ -967,7 +967,7 @@ async def indic_summarize_pdf(
         file_content = await file.read()
         files = {"file": (file.filename, file_content, "application/pdf")}
         data = {
-            "page_number": str(page_number),
+            "page_number": page_number,
             "src_lang": src_lang,
             "tgt_lang": tgt_lang,
             "model": model

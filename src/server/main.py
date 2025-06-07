@@ -950,7 +950,7 @@ async def indic_summarize_pdf(
     validate_language(src_lang, "source language")
     validate_language(tgt_lang, "target language")
 
-    logger.debug("Processing Indic PDF summary request", extra={
+    logger.info("Processing Indic PDF summary request", extra={
         "endpoint": "/v1/indic-summarize-pdf",
         "file_name": file.filename,
         "page_number": page_number,
@@ -989,7 +989,7 @@ async def indic_summarize_pdf(
         processed_page = response_data.get("processed_page", page_number)
 
         if not original_text or not summary or not translated_summary:
-            logger.warning(f"Incomplete response from external API: original_text={'present' if original_text else 'missing'}, summary={'present' if summary else 'missing'}, translated_summary={'present' if translated_summary else 'missing'}")
+            logger.info(f"Incomplete response from external API: original_text={'present' if original_text else 'missing'}, summary={'present' if summary else 'missing'}, translated_summary={'present' if translated_summary else 'missing'}")
             return IndicSummarizePDFResponse(
                 original_text=original_text or "No text extracted",
                 summary=summary or "No summary provided",
@@ -997,7 +997,7 @@ async def indic_summarize_pdf(
                 processed_page=processed_page
             )
 
-        logger.debug(f"Indic PDF summary completed in {time() - start_time:.2f} seconds, page processed: {processed_page}")
+        logger.info(f"Indic PDF summary completed in {time() - start_time:.2f} seconds, page processed: {processed_page}")
         return IndicSummarizePDFResponse(
             original_text=original_text,
             summary=summary,

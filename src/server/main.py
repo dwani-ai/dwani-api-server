@@ -188,8 +188,6 @@ class VisualQueryRequest(BaseModel):
     src_lang: str = Field(..., description="Source language code")
     tgt_lang: str = Field(..., description="Target language code")
     model: str = Field(default="gemma3", description="LLM model")
-
-
     class Config:
         schema_extra = {
             "example": {
@@ -205,7 +203,6 @@ class VisualQueryResponse(BaseModel):
 
     class Config:
         schema_extra = {"example": {"answer": "The image shows a screenshot of a webpage."}}
-
 
 # TTS Service Interface
 class TTSService(ABC):
@@ -383,6 +380,7 @@ async def chat_v2(
         response_data = response.json()
         response_text = response_data.get("response", "")
         logger.debug(f"Generated Chat response from external API: {response_text}, model: {chat_request.model}")
+
         return ChatResponse(response=response_text)
 
     except requests.Timeout:
@@ -394,7 +392,6 @@ async def chat_v2(
     except Exception as e:
         logger.error(f"Error processing request: {str(e)}")
         raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
-
 
 @app.post("/v1/transcribe/", 
           response_model=TranscriptionResponse,
@@ -516,7 +513,6 @@ class VisualQueryResponse(BaseModel):
 
     class Config:
         schema_extra = {"example": {"answer": "The image shows a screenshot of a webpage."}}
-# Updated Visual Query Endpoint
 
 # Visual Query Endpoint
 @app.post("/v1/indic_visual_query",

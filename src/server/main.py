@@ -157,7 +157,29 @@ class ChatRequest(BaseModel):
             }
         }
 
+class ChatDirectRequest(BaseModel):
+    prompt: str = Field(..., description="Prompt for chat (max 1000 characters)", max_length=1000)
+    model: str = Field(default="gemma3", description="LLM model")
+    system_prompt: str = Field(default="", description="System prompt")
+
+    class Config:
+        schema_extra = {
+            "example": {
+                "prompt": "Hello, how are you?",
+                "model": "gemma3",
+                "system_prompt": ""
+            }
+        }
+
+
 class ChatResponse(BaseModel):
+    response: str = Field(..., description="Generated chat response")
+
+    class Config:
+        schema_extra = {"example": {"response": "Hi there, I'm doing great!"}} 
+
+
+class ChatDirectResponse(BaseModel):
     response: str = Field(..., description="Generated chat response")
 
     class Config:
@@ -392,6 +414,71 @@ async def chat_v2(
     except Exception as e:
         logger.error(f"Error processing request: {str(e)}")
         raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
+
+@app.post("/v1/chat_direct",
+          response_model=ChatDirectResponse,
+          summary="Chat with AI",
+          description="Generate a chat response from a prompt,model",
+          tags=["Chat"],
+          responses={
+              200: {"description": "Chat response", "model": ChatDirectResponse},
+              400: {"description": "Invalid prompt or model"},
+              504: {"description": "Chat service timeout"}
+          })
+async def chat_direct(
+    request: Request,
+    chat_request: ChatDirectRequest
+):
+    if not chat_request.prompt.strip():
+        raise HTTPException(status_code=400, detail="Prompt cannot be empty")
+    if len(chat_request.prompt) > 1000:
+        raise HTTPException(status_code=400, detail="Prompt cannot exceed 1000 characters")
+
+    # Validate model parameter
+    valid_models = ["gemma3", "moondream", "qwen2.5vl", "qwen3", "sarvam-m", "deepseek-r1"]
+    if chat_request.model not in valid_models:
+        raise HTTPException(status_code=400, detail=f"Invalid model. Choose from {valid_models}")
+
+    logger.debug(f"Received prompt: {chat_request.prompt}, model: {chat_request.model}")
+
+    try:
+        # Construct the external URL based on the selected model
+        base_url = os.getenv('DWANI_API_BASE_URL_LLM')
+        external_url = f"{base_url}/chat_direct"
+
+        payload = {
+            "prompt": chat_request.prompt,
+            "model": chat_request.model,
+            "system_prompt" : chat_request.system_prompt
+        }
+
+        response = requests.post(
+            external_url,
+            json=payload,
+            headers={
+                "accept": "application/json",
+                "Content-Type": "application/json"
+            },
+            timeout=60
+        )
+        response.raise_for_status()
+
+        response_data = response.json()
+        response_text = response_data.get("response", "")
+        logger.debug(f"Generated Chat response from external API: {response_text}, model: {chat_request.model}")
+
+        return ChatDirectResponse(response=response_text)
+
+    except requests.Timeout:
+        logger.error("External chat API request timed out")
+        raise HTTPException(status_code=504, detail="Chat service timeout")
+    except requests.RequestException as e:
+        logger.error(f"Error calling external chat API: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Chat failed: {str(e)}")
+    except Exception as e:
+        logger.error(f"Error processing request: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
+
 
 @app.post("/v1/transcribe/", 
           response_model=TranscriptionResponse,

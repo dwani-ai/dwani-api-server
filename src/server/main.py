@@ -5,9 +5,21 @@ from abc import ABC, abstractmethod
 import uvicorn
 from fastapi import FastAPI, File, HTTPException, Query, Request, UploadFile, Form, Depends, Body
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.background import BackgroundTasks
+import tempfile
+import os
+    
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile, Form, Query
+from pydantic import BaseModel, Field
+
 from fastapi.responses import RedirectResponse, StreamingResponse
 from pydantic import BaseModel, Field
 import requests
+from typing import List, Optional, Dict, Any
+
+from openai import AsyncOpenAI, OpenAIError
+
 from time import time
 from typing import Optional
 # Assuming these are in your project structure
@@ -50,7 +62,27 @@ class VisualQueryRequest(BaseModel):
             }
         }
 
+
+class VisualQueryDirectRequest(BaseModel):
+    query: str = Field(..., description="Text query", max_length=1000)
+    model: str = Field(default="gemma3", description="LLM model", enum=SUPPORTED_MODELS)
+
+    class Config:
+        schema_extra = {
+            "example": {
+                "query": "Describe the image",
+                "model": "moondream"
+            }
+        }
+
 class VisualQueryResponse(BaseModel):
+    answer: str
+
+    class Config:
+        schema_extra = {"example": {"answer": "The image shows a screenshot of a webpage."}}
+
+
+class VisualQueryDirectResponse(BaseModel):
     answer: str
 
     class Config:
@@ -269,10 +301,6 @@ async def health_check():
 async def home():
     return RedirectResponse(url="/docs")
 
-from fastapi.responses import FileResponse
-from fastapi.background import BackgroundTasks
-import tempfile
-import os
 
 @app.post("/v1/audio/speech",
           summary="Generate Speech from Text",
@@ -592,9 +620,7 @@ async def translate(
     except ValueError as e:
         logger.error(f"Invalid JSON response: {str(e)}")
         raise HTTPException(status_code=500, detail="Invalid response format from translation service")
-    
-from fastapi import FastAPI, File, HTTPException, Request, UploadFile, Form, Query
-from pydantic import BaseModel, Field
+
 class VisualQueryResponse(BaseModel):
     answer: str
 
@@ -691,6 +717,85 @@ async def visual_query(
         logger.error(f"Invalid JSON response: {str(e)}")
         raise HTTPException(status_code=500, detail="Invalid response format from visual query service")
 
+
+
+# Visual Query Endpoint
+@app.post("/v1/visual_query_direct",
+          response_model=VisualQueryDirectResponse,
+          summary="Visual Query with Image",
+          description="Process a visual query with a text query, image.Provide query as form data, image as file upload and model as query parameters.",
+          tags=["Chat"],
+          responses={
+              200: {"description": "Query response", "model": VisualQueryDirectResponse},
+              400: {"description": "Invalid query, image"},
+              422: {"description": "Validation error in request body"},
+              504: {"description": "Visual query service timeout"}
+          })
+async def visual_query_direct(
+    request: Request,
+    query: str = Form(..., description="Text query to describe or analyze the image (e.g., 'describe the image')"),
+    file: UploadFile = File(..., description="Image file to analyze (PNG only)"),
+    model: str = Query(default="gemma3", description="LLM model", enum=SUPPORTED_MODELS)
+):
+    # Validate query
+    if not query.strip():
+        raise HTTPException(status_code=400, detail="Query cannot be empty")
+    if len(query) > 1000:
+        raise HTTPException(status_code=400, detail="Query cannot exceed 1000 characters")
+
+ 
+    # Validate model
+    validate_model(model)
+
+    logger.info("Processing visual query direct request", extra={
+        "endpoint": "/v1/visual_query_direct",
+        "query_length": len(query),
+        "file_name": file.filename,
+        "client_ip": request.client.host,
+        "model": model
+    })
+
+    external_url = f"{os.getenv('DWANI_API_BASE_URL_VISION')}/visual-query-direct/"
+
+    try:
+        file_content = await file.read()
+        if not file.content_type.startswith("image/png"):
+            raise HTTPException(status_code=400, detail="Only PNG images supported")
+
+        files = {"file": (file.filename, file_content, file.content_type)}
+        data = {
+            "prompt": query,
+            "model": model
+        }
+
+        response = requests.post(
+            external_url,
+            files=files,
+            data=data,
+            headers={"accept": "application/json"},
+            timeout=60
+        )
+        response.raise_for_status()
+
+        response_data = response.json()
+        answer = response_data.get("response", "")
+
+        if not answer:
+            logger.warning(f"Empty or missing 'response' field in external API response: {response_data}")
+            raise HTTPException(status_code=500, detail="No valid response provided by visual query direct service")
+
+        logger.debug(f"Visual query direct successful: {answer}")
+        return VisualQueryResponse(answer=answer)
+
+    except requests.Timeout:
+        logger.error("Visual query direct request timed out")
+        raise HTTPException(status_code=504, detail="Visual query direct service timeout")
+    except requests.RequestException as e:
+        logger.error(f"Error during visual query: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Visual query direct failed: {str(e)}")
+    except ValueError as e:
+        logger.error(f"Invalid JSON response: {str(e)}")
+        raise HTTPException(status_code=500, detail="Invalid response format from visual query direct service")
 
 from enum import Enum
 
@@ -1395,9 +1500,7 @@ async def indic_custom_prompt_kannada_pdf(
     finally:
         # Close the temporary file to ensure it's fully written
         temp_file.close()
-from typing import List, Optional, Dict, Any
 
-from openai import AsyncOpenAI, OpenAIError
 # OpenAI-compatible request model
 class ChatCompletionRequest(BaseModel):
     model: str = Field(default="gemma-3-12b-it", description="Model identifier")

@@ -654,7 +654,7 @@ async def visual_query(
         raise HTTPException(status_code=400, detail="Query cannot exceed 1000 characters")
 
     # Validate language codes
-    supported_languages = ["kan_Knda", "hin_Deva", "tam_Taml", "tel_Telu", "eng_Latn"]
+    supported_languages = ["kan_Knda", "hin_Deva", "tam_Taml", "tel_Telu", "eng_Latn", "deu_Latn"]
     if src_lang not in supported_languages:
         raise HTTPException(status_code=400, detail=f"Unsupported source language: {src_lang}. Must be one of {supported_languages}")
     if tgt_lang not in supported_languages:

@@ -1,0 +1,25 @@
+version: '3.9'
+
+services:
+  dhwani_api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - DWANI_API_BASE_URL_PDF=${DWANI_API_BASE_URL_PDF}
+      - DWANI_API_BASE_URL_VISION=${DWANI_API_BASE_URL_VISION}
+      - DWANI_API_BASE_URL_LLM=${DWANI_API_BASE_URL_LLM}
+      - DWANI_API_BASE_URL_LLM_QWEN=${DWANI_API_BASE_URL_LLM_QWEN}
+      - DWANI_API_BASE_URL_TTS=${DWANI_API_BASE_URL_TTS}
+      - DWANI_API_BASE_URL_ASR=${DWANI_API_BASE_URL_ASR}
+      - DWANI_API_BASE_URL_TRANSLATE=${DWANI_API_BASE_URL_TRANSLATE}
+      - DWANI_API_BASE_URL_S2S=${DWANI_API_BASE_URL_S2S}
+      - DWANI_AI_LLM_URL=${DWANI_AI_LLM_URL}
+      - DWANI_AI_LLM_API_KEY=${DWANI_AI_LLM_API_KEY}
+      - ENVIRONMENT=production
+      - LOG_LEVEL=INFO
+    volumes:
+      - ./.env:/app/.env
+    restart: unless-stopped

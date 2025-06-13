@@ -1,5 +1,18 @@
 samples
 
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.git
+.venv
+env
+venv
+*.egg-info
+dist
+build
+
+
 *.log
 venv
 *.nemo

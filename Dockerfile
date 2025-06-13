@@ -1,32 +1,35 @@
-# Use official Python runtime as base image
+# Build stage
+FROM python:3.10-slim as builder
+
+WORKDIR /app
+
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
+RUN apt-get update && apt-get install -y gcc curl && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt .
+RUN pip install --user --no-cache-dir -r requirements.txt
+
+# Runtime stage
 FROM python:3.10-slim
 
 WORKDIR /app
 
-# Set environment variables
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PYTHONUNBUFFERED=1
+# Copy only the installed packages from builder
+COPY --from=builder /root/.local /root/.local
+COPY --from=builder /app/requirements.txt .
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
-    gcc \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
-
-# Install Python dependencies
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-WORKDIR /app
+# Ensure scripts in .local are usable
+ENV PATH=/root/.local/bin:$PATH
 
 # Copy application code
 COPY . .
 
-# Expose port from settings
 EXPOSE 7860
 
-# Healthcheck
 HEALTHCHECK --interval=30s --timeout=3s \
   CMD curl -f http://localhost:7860/v1/health || exit 1
 
-# Command to run the application
 CMD ["python", "/app/src/server/main.py", "--host", "0.0.0.0", "--port", "7860"]

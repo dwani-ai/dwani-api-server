@@ -33,7 +33,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Include routers
 app.include_router(audio.router)
 app.include_router(chat.router)
 app.include_router(pdf.router)

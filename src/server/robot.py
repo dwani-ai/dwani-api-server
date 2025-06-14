@@ -456,9 +456,6 @@ class SupportedLanguage(str, Enum):
 
 if __name__ == "__main__":
     # Ensure EXTERNAL_API_BASE_URL is set
-    external_api_base_url_pdf = os.getenv("DWANI_API_BASE_URL_PDF")
-    if not external_api_base_url_pdf:
-        raise ValueError("Environment variable DWANI_API_BASE_URL_PDF must be set")
     
     external_api_base_url_vision = os.getenv("DWANI_API_BASE_URL_VISION")
     if not external_api_base_url_vision:

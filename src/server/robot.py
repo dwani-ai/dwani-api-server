@@ -465,6 +465,7 @@ async def visual_query_direct_raw(
     query: str = Form(..., description="Text query to describe or analyze the image (e.g., 'describe the image')"),
     model: str = Query(default="gemma3", description="LLM model", enum=SUPPORTED_MODELS)
 ):
+    print("visual raw 1")
     # Validate query
     if not query.strip():
         raise HTTPException(status_code=400, detail="Query cannot be empty")

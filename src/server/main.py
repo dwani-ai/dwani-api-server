@@ -1506,6 +1506,8 @@ from collections import defaultdict
 from dotenv import load_dotenv
 load_dotenv()
 
+import time
+
 # vLLM server configuration
 VLLM_API_BASE = os.getenv("VLLM_API_BASE", "http://localhost:8000/v1")
 VLLM_API_KEY = os.getenv("VLLM_API_KEY", "")

@@ -5,9 +5,21 @@ from abc import ABC, abstractmethod
 import uvicorn
 from fastapi import FastAPI, File, HTTPException, Query, Request, UploadFile, Form, Depends, Body
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.background import BackgroundTasks
+import tempfile
+import os
+    
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile, Form, Query
+from pydantic import BaseModel, Field
+
 from fastapi.responses import RedirectResponse, StreamingResponse
 from pydantic import BaseModel, Field
 import requests
+from typing import List, Optional, Dict, Any
+
+from openai import AsyncOpenAI, OpenAIError
+
 from time import time
 from typing import Optional
 # Assuming these are in your project structure
@@ -31,7 +43,7 @@ app = FastAPI(
 # Supported models
 SUPPORTED_MODELS = ["gemma3", "moondream", "qwen2.5vl", "qwen3", "sarvam-m", "deepseek-r1"]
 
-SUPPORTED_LANGUAGES = ["kan_Knda", "hin_Deva", "tam_Taml", "tel_Telu", "eng_Latn"]
+SUPPORTED_LANGUAGES = ["kan_Knda", "hin_Deva", "tam_Taml", "tel_Telu", "eng_Latn", "deu_Latn"]
 
 # Pydantic models (updated to include model validation)
 class VisualQueryRequest(BaseModel):
@@ -50,7 +62,27 @@ class VisualQueryRequest(BaseModel):
             }
         }
 
+
+class VisualQueryDirectRequest(BaseModel):
+    query: str = Field(..., description="Text query", max_length=1000)
+    model: str = Field(default="gemma3", description="LLM model", enum=SUPPORTED_MODELS)
+
+    class Config:
+        schema_extra = {
+            "example": {
+                "query": "Describe the image",
+                "model": "moondream"
+            }
+        }
+
 class VisualQueryResponse(BaseModel):
+    answer: str
+
+    class Config:
+        schema_extra = {"example": {"answer": "The image shows a screenshot of a webpage."}}
+
+
+class VisualQueryDirectResponse(BaseModel):
     answer: str
 
     class Config:
@@ -157,7 +189,29 @@ class ChatRequest(BaseModel):
             }
         }
 
+class ChatDirectRequest(BaseModel):
+    prompt: str = Field(..., description="Prompt for chat (max 1000 characters)", max_length=1000)
+    model: str = Field(default="gemma3", description="LLM model")
+    system_prompt: str = Field(default="", description="System prompt")
+
+    class Config:
+        schema_extra = {
+            "example": {
+                "prompt": "Hello, how are you?",
+                "model": "gemma3",
+                "system_prompt": ""
+            }
+        }
+
+
 class ChatResponse(BaseModel):
+    response: str = Field(..., description="Generated chat response")
+
+    class Config:
+        schema_extra = {"example": {"response": "Hi there, I'm doing great!"}} 
+
+
+class ChatDirectResponse(BaseModel):
     response: str = Field(..., description="Generated chat response")
 
     class Config:
@@ -247,10 +301,6 @@ async def health_check():
 async def home():
     return RedirectResponse(url="/docs")
 
-from fastapi.responses import FileResponse
-from fastapi.background import BackgroundTasks
-import tempfile
-import os
 
 @app.post("/v1/audio/speech",
           summary="Generate Speech from Text",
@@ -393,6 +443,71 @@ async def chat_v2(
         logger.error(f"Error processing request: {str(e)}")
         raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
 
+@app.post("/v1/chat_direct",
+          response_model=ChatDirectResponse,
+          summary="Chat with AI",
+          description="Generate a chat response from a prompt,model",
+          tags=["Chat"],
+          responses={
+              200: {"description": "Chat response", "model": ChatDirectResponse},
+              400: {"description": "Invalid prompt or model"},
+              504: {"description": "Chat service timeout"}
+          })
+async def chat_direct(
+    request: Request,
+    chat_request: ChatDirectRequest
+):
+    if not chat_request.prompt.strip():
+        raise HTTPException(status_code=400, detail="Prompt cannot be empty")
+    if len(chat_request.prompt) > 1000:
+        raise HTTPException(status_code=400, detail="Prompt cannot exceed 1000 characters")
+
+    # Validate model parameter
+    valid_models = ["gemma3", "moondream", "qwen2.5vl", "qwen3", "sarvam-m", "deepseek-r1"]
+    if chat_request.model not in valid_models:
+        raise HTTPException(status_code=400, detail=f"Invalid model. Choose from {valid_models}")
+
+    logger.debug(f"Received prompt: {chat_request.prompt}, model: {chat_request.model}")
+
+    try:
+        # Construct the external URL based on the selected model
+        base_url = os.getenv('DWANI_API_BASE_URL_LLM')
+        external_url = f"{base_url}/chat_direct"
+
+        payload = {
+            "prompt": chat_request.prompt,
+            "model": chat_request.model,
+            "system_prompt" : chat_request.system_prompt
+        }
+
+        response = requests.post(
+            external_url,
+            json=payload,
+            headers={
+                "accept": "application/json",
+                "Content-Type": "application/json"
+            },
+            timeout=60
+        )
+        response.raise_for_status()
+
+        response_data = response.json()
+        response_text = response_data.get("response", "")
+        logger.debug(f"Generated Chat response from external API: {response_text}, model: {chat_request.model}")
+
+        return ChatDirectResponse(response=response_text)
+
+    except requests.Timeout:
+        logger.error("External chat API request timed out")
+        raise HTTPException(status_code=504, detail="Chat service timeout")
+    except requests.RequestException as e:
+        logger.error(f"Error calling external chat API: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Chat failed: {str(e)}")
+    except Exception as e:
+        logger.error(f"Error processing request: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
+
+
 @app.post("/v1/transcribe/", 
           response_model=TranscriptionResponse,
           summary="Transcribe Audio File",
@@ -505,9 +620,7 @@ async def translate(
     except ValueError as e:
         logger.error(f"Invalid JSON response: {str(e)}")
         raise HTTPException(status_code=500, detail="Invalid response format from translation service")
-    
-from fastapi import FastAPI, File, HTTPException, Request, UploadFile, Form, Query
-from pydantic import BaseModel, Field
+
 class VisualQueryResponse(BaseModel):
     answer: str
 
@@ -541,7 +654,7 @@ async def visual_query(
         raise HTTPException(status_code=400, detail="Query cannot exceed 1000 characters")
 
     # Validate language codes
-    supported_languages = ["kan_Knda", "hin_Deva", "tam_Taml", "tel_Telu", "eng_Latn"]
+    supported_languages = ["kan_Knda", "hin_Deva", "tam_Taml", "tel_Telu", "eng_Latn", "deu_Latn"]
     if src_lang not in supported_languages:
         raise HTTPException(status_code=400, detail=f"Unsupported source language: {src_lang}. Must be one of {supported_languages}")
     if tgt_lang not in supported_languages:
@@ -604,6 +717,85 @@ async def visual_query(
         logger.error(f"Invalid JSON response: {str(e)}")
         raise HTTPException(status_code=500, detail="Invalid response format from visual query service")
 
+
+
+# Visual Query Endpoint
+@app.post("/v1/visual_query_direct",
+          response_model=VisualQueryDirectResponse,
+          summary="Visual Query with Image",
+          description="Process a visual query with a text query, image.Provide query as form data, image as file upload and model as query parameters.",
+          tags=["Chat"],
+          responses={
+              200: {"description": "Query response", "model": VisualQueryDirectResponse},
+              400: {"description": "Invalid query, image"},
+              422: {"description": "Validation error in request body"},
+              504: {"description": "Visual query service timeout"}
+          })
+async def visual_query_direct(
+    request: Request,
+    query: str = Form(..., description="Text query to describe or analyze the image (e.g., 'describe the image')"),
+    file: UploadFile = File(..., description="Image file to analyze (PNG only)"),
+    model: str = Query(default="gemma3", description="LLM model", enum=SUPPORTED_MODELS)
+):
+    # Validate query
+    if not query.strip():
+        raise HTTPException(status_code=400, detail="Query cannot be empty")
+    if len(query) > 1000:
+        raise HTTPException(status_code=400, detail="Query cannot exceed 1000 characters")
+
+ 
+    # Validate model
+    validate_model(model)
+
+    logger.info("Processing visual query direct request", extra={
+        "endpoint": "/v1/visual_query_direct",
+        "query_length": len(query),
+        "file_name": file.filename,
+        "client_ip": request.client.host,
+        "model": model
+    })
+
+    external_url = f"{os.getenv('DWANI_API_BASE_URL_VISION')}/visual-query-direct/"
+
+    try:
+        file_content = await file.read()
+        if not file.content_type.startswith("image/png"):
+            raise HTTPException(status_code=400, detail="Only PNG images supported")
+
+        files = {"file": (file.filename, file_content, file.content_type)}
+        data = {
+            "prompt": query,
+            "model": model
+        }
+
+        response = requests.post(
+            external_url,
+            files=files,
+            data=data,
+            headers={"accept": "application/json"},
+            timeout=60
+        )
+        response.raise_for_status()
+
+        response_data = response.json()
+        answer = response_data.get("response", "")
+
+        if not answer:
+            logger.warning(f"Empty or missing 'response' field in external API response: {response_data}")
+            raise HTTPException(status_code=500, detail="No valid response provided by visual query direct service")
+
+        logger.debug(f"Visual query direct successful: {answer}")
+        return VisualQueryResponse(answer=answer)
+
+    except requests.Timeout:
+        logger.error("Visual query direct request timed out")
+        raise HTTPException(status_code=504, detail="Visual query direct service timeout")
+    except requests.RequestException as e:
+        logger.error(f"Error during visual query: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Visual query direct failed: {str(e)}")
+    except ValueError as e:
+        logger.error(f"Invalid JSON response: {str(e)}")
+        raise HTTPException(status_code=500, detail="Invalid response format from visual query direct service")
 
 from enum import Enum
 
@@ -1308,23 +1500,50 @@ async def indic_custom_prompt_kannada_pdf(
     finally:
         # Close the temporary file to ensure it's fully written
         temp_file.close()
-from typing import List, Optional, Dict, Any
 
-from openai import AsyncOpenAI, OpenAIError
-# OpenAI-compatible request model
+
+from collections import defaultdict
+from dotenv import load_dotenv
+load_dotenv()
+
+import time
+
+# vLLM server configuration
+VLLM_API_BASE = os.getenv("VLLM_API_BASE", "http://localhost:9000/v1")
+VLLM_API_KEY = os.getenv("VLLM_API_KEY", "")
+
+# HTTP headers for vLLM requests
+headers = {
+    "Content-Type": "application/json",
+    "Authorization": f"Bearer {VLLM_API_KEY}" if VLLM_API_KEY else None
+}
+headers = {k: v for k, v in headers.items() if v is not None}
+
+# In-memory storage for rate limiting
+rate_limit_store = defaultdict(list)
+
+# Pydantic models for OpenAI-compatible API
+class Message(BaseModel):
+    role: str
+    content: str
+
 class ChatCompletionRequest(BaseModel):
-    model: str = Field(default="gemma-3-12b-it", description="Model identifier")
-    messages: List[Dict[str, str]] = Field(..., description="List of messages")
-    max_tokens: Optional[int] = Field(None, description="Maximum tokens to generate")
-    temperature: Optional[float] = Field(1.0, description="Sampling temperature")
-    top_p: Optional[float] = Field(1.0, description="Nucleus sampling parameter")
-    stream: Optional[bool] = Field(False, description="Whether to stream the response")
+    model: str
+    messages: List[Message]
+    temperature: Optional[float] = 0.7
+    max_tokens: Optional[int] = 512
+    top_p: Optional[float] = 1.0
+    stream: Optional[bool] = False
 
-# OpenAI-compatible response model
 class ChatCompletionChoice(BaseModel):
     index: int
-    message: Dict[str, str]
-    finish_reason: Optional[str]
+    message: Message
+    finish_reason: Optional[str] = None
+
+class Usage(BaseModel):
+    prompt_tokens: Optional[int] = None
+    completion_tokens: Optional[int] = None
+    total_tokens: Optional[int] = None
 
 class ChatCompletionResponse(BaseModel):
     id: str
@@ -1332,88 +1551,126 @@ class ChatCompletionResponse(BaseModel):
     created: int
     model: str
     choices: List[ChatCompletionChoice]
-    usage: Optional[Dict[str, int]] = None
+    usage: Optional[Usage] = None
 
-# Initialize OpenAI client
-openai_client = AsyncOpenAI(
-    base_url=os.getenv("DWANI_AI_LLM_URL"),  # e.g., https://<ngrok-url>.ngrok.io or http://localhost:7860
-    api_key=os.getenv("DWANI_AI_LLM_API_KEY", ""),  # Optional API key
-    timeout=30.0
-)
+# Custom features
+class ProxyFeatures:
+    @staticmethod
+    def log_request(request: Dict, client_ip: str) -> None:
+        """Log incoming request details."""
+        logger.info(
+            f"Request from {client_ip}: model={request.get('model')}, "
+            f"messages={len(request.get('messages', []))} messages"
+        )
 
-@app.post("/v1/chat/completions",
-          response_model=ChatCompletionResponse,
-          summary="OpenAI-Compatible Chat Completions",
-          description="Proxies chat completions to llama-server using OpenAI API format.",
-          tags=["Chat"])
-async def chat_completions(request: Request, body: ChatCompletionRequest):
-    logger.debug("Received chat completion request", extra={
-        "endpoint": "/v1/chat/completions",
-        "model": body.model,
-        "messages": body.messages,
-        "client_ip": request.client.host
-    })
+    @staticmethod
+    def log_response(response: Dict, processing_time: Optional[float] = None) -> None:
+        """Log response details."""
+        logger.info(
+            f"Response: id={response.get('id')}, choices={len(response.get('choices', []))}, "
+            f"processing_time={processing_time:.2f}s" if processing_time else "processing_time=unknown"
+        )
 
-    # Validate messages
-    if not body.messages:
-        logger.error("Messages field is empty", extra={"client_ip": request.client.host})
-        raise HTTPException(status_code=400, detail="Messages cannot be empty")
+    @staticmethod
+    def rate_limit(client_ip: str, max_requests: int = 10, window_seconds: int = 60) -> bool:
+        """In-memory rate limiting per client IP."""
+        current_time = time.time()
+        rate_limit_store[client_ip] = [
+            t for t in rate_limit_store[client_ip] if current_time - t < window_seconds
+        ]
+        rate_limit_store[client_ip].append(current_time)
+        if len(rate_limit_store[client_ip]) > max_requests:
+            logger.warning(f"Rate limit exceeded for {client_ip}")
+            return False
+        return True
 
-    start_time = time()
+    @staticmethod
+    def modify_response(response: Dict) -> Dict:
+        """Modify response (e.g., add disclaimer)."""
+        for choice in response.get('choices', []):
+            choice['message']['content'] = (
+                f"{choice['message']['content']}\n\n*Disclaimer: Generated by AI, verify before use.*"
+            )
+        return response
+
+    @staticmethod
+    def estimate_usage(request: Dict, response: Dict) -> Dict:
+        """Estimate token usage if not provided by vLLM."""
+        if response.get('usage') is None or not all(
+            key in response['usage'] for key in ['prompt_tokens', 'completion_tokens', 'total_tokens']
+        ):
+            prompt_text = ' '.join(msg.get('content', '') for msg in request.get('messages', []))
+            response_text = response.get('choices', [{}])[0].get('message', {}).get('content', '')
+            # Rough token estimation (1 token ~ 4 characters, minimum 1 token)
+            prompt_tokens = max(len(prompt_text) // 4, 1)
+            completion_tokens = max(len(response_text) // 4, 1)
+            response['usage'] = {
+                'prompt_tokens': prompt_tokens,
+                'completion_tokens': completion_tokens,
+                'total_tokens': prompt_tokens + completion_tokens
+            }
+        return response
+
+from pydantic import BaseModel, ValidationError
+
+# Chat completions endpoint
+@app.post("/v1/chat/completions", response_model=ChatCompletionResponse)
+async def chat_completions(request: ChatCompletionRequest, fastapi_request: Request):
+    """Proxy chat completion requests to vLLM with custom features."""
+    start_time = time.time()
+    client_ip = fastapi_request.client.host
+
+    # Log request
+    ProxyFeatures.log_request(request.dict(), client_ip)
+
+    # Rate limiting
+    if not ProxyFeatures.rate_limit(client_ip):
+        raise HTTPException(status_code=429, detail="Rate limit exceeded")
+
+    # Forward request to vLLM
+    if request.stream:
+        raise HTTPException(status_code=501, detail="Streaming not supported yet")
 
     try:
-        # Proxy request to llama-server using OpenAI client
-        response = await openai_client.chat.completions.create(
-            model=body.model,
-            messages=body.messages,
-            max_tokens=body.max_tokens,
-            temperature=body.temperature,
-            top_p=body.top_p,
-            stream=body.stream
+        response = requests.post(
+            f"{VLLM_API_BASE}/chat/completions",
+            json=request.dict(),
+            headers=headers,
+            timeout=30
         )
+        response.raise_for_status()
+        vllm_response = response.json()
 
-        # Streaming not supported in this simple version
-        if body.stream:
-            logger.error("Streaming requested but not supported")
-            raise HTTPException(status_code=400, detail="Streaming not supported")
+        # Log raw response for debugging
+        logger.debug(f"vLLM raw response: {vllm_response}")
 
-        # Map OpenAI response to Pydantic model
-        openai_response = ChatCompletionResponse(
-            id=response.id,
-            created=response.created,
-            model=response.model,
-            choices=[
-                ChatCompletionChoice(
-                    index=choice.index,
-                    message={
-                        "role": choice.message.role,
-                        "content": choice.message.content
-                    },
-                    finish_reason=choice.finish_reason
-                ) for choice in response.choices
-            ],
-            usage=(
-                {
-                    "prompt_tokens": response.usage.prompt_tokens,
-                    "completion_tokens": response.usage.completion_tokens,
-                    "total_tokens": response.usage.total_tokens
-                } if response.usage else None
-            )
-        )
+        # Estimate usage if missing
+        vllm_response = ProxyFeatures.estimate_usage(request.dict(), vllm_response)
 
-        logger.debug(f"Chat completion successful in {time() - start_time:.2f} seconds", extra={
-            "response_length": len(response.choices[0].message.content if response.choices else 0)
-        })
-        return openai_response
+        # Modify response
+        modified_response = ProxyFeatures.modify_response(vllm_response)
 
-    except OpenAIError as e:
-        logger.error(f"llama-server error: {str(e)}", extra={"client_ip": request.client.host})
-        status_code = 504 if "timeout" in str(e).lower() else 500
-        raise HTTPException(status_code=status_code, detail=f"llama-server error: {str(e)}")
-    except Exception as e:
-        logger.error(f"Internal error: {str(e)}", extra={"client_ip": request.client.host})
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
-    
+        # Log response
+        processing_time = time.time() - start_time
+        ProxyFeatures.log_response(modified_response, processing_time)
+
+        # Validate and return response
+        return ChatCompletionResponse(**modified_response)
+
+    except requests.RequestException as e:
+        logger.error(f"vLLM server error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"vLLM error: {str(e)}")
+    except ValidationError as e:
+        logger.error(f"Response validation error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Response validation error: {str(e)}")
+
+# Health check endpoint
+@app.get("/health")
+async def health():
+    return {"status": "healthy"}
+
+
+
 
 if __name__ == "__main__":
     # Ensure EXTERNAL_API_BASE_URL is set

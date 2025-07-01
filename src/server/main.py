@@ -981,7 +981,7 @@ async def extract_and_translate(
     })
 
     external_url = f"{os.getenv('DWANI_API_BASE_URL_PDF')}/indic-extract-text/"
-    start_time = time()
+    #start_time = time()
 
     try:
         file_content = await file.read()
@@ -1013,7 +1013,7 @@ async def extract_and_translate(
             translated_content=translated_content
         )
 
-        logger.debug(f"Indic extract text completed in {time() - start_time:.2f} seconds")
+        #logger.debug(f"Indic extract text completed in {time() - start_time:.2f} seconds")
         return DocumentProcessResponse(pages=[page])
 
     except requests.Timeout:

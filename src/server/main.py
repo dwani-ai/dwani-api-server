@@ -903,7 +903,7 @@ async def extract_text(
     })
 
     external_url = f"{os.getenv('DWANI_API_BASE_URL_PDF')}/extract-text/"
-    start_time = time()
+    start_time = time.time()
 
     try:
         file_content = await file.read()

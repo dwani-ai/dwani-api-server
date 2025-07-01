@@ -542,7 +542,7 @@ async def transcribe_audio(
         response.raise_for_status()
         
         transcription = response.json().get("text", "")
-        logger.debug(f"Transcription completed in {time() - start_time:.2f} seconds")
+        logger.debug(f"Transcription completed in {time.time() - start_time:.2f} seconds")
         return TranscriptionResponse(text=transcription)
     
     except requests.Timeout:
@@ -925,7 +925,7 @@ async def extract_text(
             logger.warning("No page_content found in external API response")
             extracted_text = ""
 
-        logger.debug(f"PDF text extraction completed in {time() - start_time:.2f} seconds")
+        logger.debug(f"PDF text extraction completed in {time.time() - start_time:.2f} seconds")
         return PDFTextExtractionResponse(page_content=extracted_text.strip())
 
     except requests.Timeout:
@@ -1013,7 +1013,7 @@ async def extract_and_translate(
             translated_content=translated_content
         )
 
-        #logger.debug(f"Indic extract text completed in {time() - start_time:.2f} seconds")
+        #logger.debug(f"Indic extract text completed in {time.time() - start_time:.2f} seconds")
         return DocumentProcessResponse(pages=[page])
 
     except requests.Timeout:
@@ -1091,7 +1091,7 @@ async def summarize_pdf(
                 processed_page=processed_page
             )
 
-        logger.debug(f"PDF summary completed in {time() - start_time:.2f} seconds")
+        logger.debug(f"PDF summary completed in {time.time() - start_time:.2f} seconds")
         return SummarizePDFResponse(
             original_text=original_text,
             summary=summary,
@@ -1187,7 +1187,7 @@ async def indic_summarize_pdf(
                 processed_page=processed_page
             )
 
-        logger.info(f"Indic PDF summary completed in {time() - start_time:.2f} seconds, page processed: {processed_page}")
+        logger.info(f"Indic PDF summary completed in {time.time() - start_time:.2f} seconds, page processed: {processed_page}")
         return IndicSummarizePDFResponse(
             original_text=original_text,
             summary=summary,
@@ -1273,7 +1273,7 @@ async def custom_prompt_pdf(
                 processed_page=processed_page
             )
 
-        logger.debug(f"Custom prompt PDF completed in {time() - start_time:.2f} seconds")
+        logger.debug(f"Custom prompt PDF completed in {time.time() - start_time:.2f} seconds")
         return CustomPromptPDFResponse(
             original_text=original_text,
             response=custom_response,
@@ -1371,7 +1371,7 @@ async def indic_custom_prompt_pdf(
                 processed_page=processed_page
             )
 
-        logger.debug(f"Indic custom prompt PDF completed in {time() - start_time:.2f} seconds, page processed: {processed_page}")
+        logger.debug(f"Indic custom prompt PDF completed in {time.time() - start_time:.2f} seconds, page processed: {processed_page}")
         return IndicCustomPromptPDFResponse(
             original_text=original_text,
             response=custom_response,
@@ -1483,7 +1483,7 @@ async def indic_custom_prompt_kannada_pdf(
 
         background_tasks.add_task(cleanup_file, temp_file_path)
 
-        logger.debug(f"Kannada PDF generation completed in {time() - start_time:.2f} seconds")
+        logger.debug(f"Kannada PDF generation completed in {time.time() - start_time:.2f} seconds")
         return FileResponse(
             path=temp_file_path,
             filename="generated_kannada.pdf",

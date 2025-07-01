@@ -527,7 +527,7 @@ async def transcribe_audio(
     if language not in allowed_languages:
         raise HTTPException(status_code=400, detail=f"Language must be one of {allowed_languages}")
     
-    start_time = time()
+    start_time = time.time()
     try:
         file_content = await file.read()
         files = {"file": (file.filename, file_content, file.content_type)}
@@ -981,7 +981,7 @@ async def extract_and_translate(
     })
 
     external_url = f"{os.getenv('DWANI_API_BASE_URL_PDF')}/indic-extract-text/"
-    #start_time = time()
+    #start_time = time.time()
 
     try:
         file_content = await file.read()
@@ -1062,7 +1062,7 @@ async def summarize_pdf(
     })
 
     external_url = f"{os.getenv('DWANI_API_BASE_URL_PDF')}/summarize-pdf"
-    start_time = time()
+    start_time = time.time()
 
     try:
         file_content = await file.read()
@@ -1151,7 +1151,7 @@ async def indic_summarize_pdf(
     })
 
     external_url = f"{os.getenv('DWANI_API_BASE_URL_PDF')}/indic-summarize-pdf"
-    start_time = time()
+    start_time = time.time()
 
     try:
         file_content = await file.read()
@@ -1244,7 +1244,7 @@ async def custom_prompt_pdf(
     })
 
     external_url = f"{os.getenv('DWANI_API_BASE_URL_PDF')}/custom-prompt-pdf"
-    start_time = time()
+    start_time = time.time()
 
     try:
         file_content = await file.read()
@@ -1334,7 +1334,7 @@ async def indic_custom_prompt_pdf(
     })
 
     external_url = f"{os.getenv('DWANI_API_BASE_URL_PDF')}/indic-custom-prompt-pdf"
-    start_time = time()
+    start_time = time.time()
 
     try:
         file_content = await file.read()
@@ -1435,7 +1435,7 @@ async def indic_custom_prompt_kannada_pdf(
     })
 
     external_url = f"{os.getenv('DWANI_API_BASE_URL_PDF')}/indic-custom-prompt-kannada-pdf/"
-    start_time = time()
+    start_time = time.time()
 
     # Create a temporary file to store the generated PDF
     temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")

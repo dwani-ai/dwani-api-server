@@ -1,5 +1,5 @@
 # Build stage
-FROM python:3.10-slim as builder
+FROM python:3.10-slim AS builder
 
 WORKDIR /app
 
@@ -32,4 +32,4 @@ EXPOSE 7860
 HEALTHCHECK --interval=30s --timeout=3s \
   CMD curl -f http://localhost:7860/v1/health || exit 1
 
-CMD ["python", "/app/src/server/main.py", "--host", "0.0.0.0", "--port", "7860"]
+CMD ["python", "-m" , "src.app.main", "--host", "0.0.0.0", "--port", "7860"]

@@ -174,7 +174,7 @@ class AudioProcessingResponse(BaseModel):
         schema_extra = {"example": {"result": "Processed audio output"}} 
 
 class ChatRequest(BaseModel):
-    prompt: str = Field(..., description="Prompt for chat (max 1000 characters)", max_length=1000)
+    prompt: str = Field(..., description="Prompt for chat (max 10000 characters)", max_length=10000)
     src_lang: str = Field(..., description="Source language code")
     tgt_lang: str = Field(..., description="Target language code")
     model: str = Field(default="gemma3", description="LLM model")
@@ -190,7 +190,7 @@ class ChatRequest(BaseModel):
         }
 
 class ChatDirectRequest(BaseModel):
-    prompt: str = Field(..., description="Prompt for chat (max 1000 characters)", max_length=1000)
+    prompt: str = Field(..., description="Prompt for chat (max 10000 characters)", max_length=10000)
     model: str = Field(default="gemma3", description="LLM model")
     system_prompt: str = Field(default="", description="System prompt")
 
@@ -314,15 +314,15 @@ async def home():
           })
 async def generate_audio(
     request: Request,
-    input: str = Query(..., description="Text to convert to speech (max 1000 characters)"),
+    input: str = Query(..., description="Text to convert to speech (max 10000 characters)"),
     response_format: str = Query("mp3", description="Audio format (ignored, defaults to mp3 for external API)"),
     tts_service: TTSService = Depends(get_tts_service),
     background_tasks: BackgroundTasks = BackgroundTasks()
 ):
     if not input.strip():
         raise HTTPException(status_code=400, detail="Input cannot be empty")
-    if len(input) > 1000:
-        raise HTTPException(status_code=400, detail="Input cannot exceed 1000 characters")
+    if len(input) > 10000:
+        raise HTTPException(status_code=400, detail="Input cannot exceed 10000 characters")
     
     logger.debug("Processing speech request", extra={
         "endpoint": "/v1/audio/speech",
@@ -394,8 +394,8 @@ async def chat_v2(
 ):
     if not chat_request.prompt.strip():
         raise HTTPException(status_code=400, detail="Prompt cannot be empty")
-    if len(chat_request.prompt) > 1000:
-        raise HTTPException(status_code=400, detail="Prompt cannot exceed 1000 characters")
+    if len(chat_request.prompt) > 10000:
+        raise HTTPException(status_code=400, detail="Prompt cannot exceed 10000 characters")
 
     # Validate model parameter
     valid_models = ["gemma3", "moondream", "qwen2.5vl", "qwen3", "sarvam-m", "deepseek-r1"]
@@ -459,8 +459,8 @@ async def chat_direct(
 ):
     if not chat_request.prompt.strip():
         raise HTTPException(status_code=400, detail="Prompt cannot be empty")
-    if len(chat_request.prompt) > 1000:
-        raise HTTPException(status_code=400, detail="Prompt cannot exceed 1000 characters")
+    if len(chat_request.prompt) > 10000:
+        raise HTTPException(status_code=400, detail="Prompt cannot exceed 10000 characters")
 
     # Validate model parameter
     valid_models = ["gemma3", "moondream", "qwen2.5vl", "qwen3", "sarvam-m", "deepseek-r1"]
@@ -650,8 +650,8 @@ async def visual_query(
     # Validate query
     if not query.strip():
         raise HTTPException(status_code=400, detail="Query cannot be empty")
-    if len(query) > 1000:
-        raise HTTPException(status_code=400, detail="Query cannot exceed 1000 characters")
+    if len(query) > 10000:
+        raise HTTPException(status_code=400, detail="Query cannot exceed 10000 characters")
 
     # Validate language codes
     supported_languages = ["kan_Knda", "hin_Deva", "tam_Taml", "tel_Telu", "eng_Latn", "deu_Latn"]
@@ -740,8 +740,8 @@ async def visual_query_direct(
     # Validate query
     if not query.strip():
         raise HTTPException(status_code=400, detail="Query cannot be empty")
-    if len(query) > 1000:
-        raise HTTPException(status_code=400, detail="Query cannot exceed 1000 characters")
+    if len(query) > 10000:
+        raise HTTPException(status_code=400, detail="Query cannot exceed 10000 characters")
 
  
     # Validate model

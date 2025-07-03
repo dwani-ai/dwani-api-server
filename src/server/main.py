@@ -267,6 +267,7 @@ class TTSService(ABC):
 class ExternalTTSService(TTSService):
     async def generate_speech(self, payload: dict) -> requests.Response:
         try:
+            print(payload)
             if(payload["language"] == "kannada"):
                 base_url = f"{os.getenv('DWANI_API_BASE_URL_TTS')}/v1/audio/speech"
                 return requests.post(

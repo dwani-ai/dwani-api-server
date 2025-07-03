@@ -541,14 +541,14 @@ async def transcribe_audio(
         if response.status_code == 200:
             transcription = response.text.strip()
             if transcription:
-                print(f"Transcribed: {transcription}")
+                logger.debug(f"Transcribed: {transcription}")
                 return transcription
 
             else:
-                print("Transcription empty, try again.")
+                logger.debug("Transcription empty, try again.")
                 raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")
         else:
-            print(f"Transcription error: {response.status_code} - {response.text}")
+            logger.debug(f"Transcription error: {response.status_code} - {response.text}")
             raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")
     else: 
         try:
@@ -686,7 +686,7 @@ async def visual_query(
     # Validate model
     validate_model(model)
 
-    logger.info("Processing visual query request", extra={
+    logger.debug("Processing visual query request", extra={
         "endpoint": "/v1/indic_visual_query",
         "query_length": len(query),
         "file_name": file.filename,
@@ -770,7 +770,7 @@ async def visual_query_direct(
     # Validate model
     validate_model(model)
 
-    logger.info("Processing visual query direct request", extra={
+    logger.debug("Processing visual query direct request", extra={
         "endpoint": "/v1/visual_query_direct",
         "query_length": len(query),
         "file_name": file.filename,
@@ -1151,7 +1151,7 @@ async def indic_summarize_pdf(
     tgt_lang: str = Form("kan_Knda", description="Target language code (e.g., kan_Knda)"),  # Default added
     model: str = Form(default="gemma3", description="LLM model", enum=SUPPORTED_MODELS)
 ):
-    logger.info(f"Processing indic summarize PDF: page_number={page_number}, model={model}, src_lang={src_lang}, tgt_lang={tgt_lang} and file={file.filename}")
+    logger.debug(f"Processing indic summarize PDF: page_number={page_number}, model={model}, src_lang={src_lang}, tgt_lang={tgt_lang} and file={file.filename}")
 
     if not file.filename.lower().endswith('.pdf'):
         raise HTTPException(status_code=400, detail="File must be a PDF")
@@ -1163,7 +1163,7 @@ async def indic_summarize_pdf(
     validate_language(src_lang, "source language")
     validate_language(tgt_lang, "target language")
 
-    logger.info("Processing Indic PDF summary request", extra={
+    logger.debug("Processing Indic PDF summary request", extra={
         "endpoint": "/v1/indic-summarize-pdf",
         "file_name": file.filename,
         "page_number": page_number,
@@ -1202,7 +1202,7 @@ async def indic_summarize_pdf(
         processed_page = response_data.get("processed_page", page_number)
 
         if not original_text or not summary or not translated_summary:
-            logger.info(f"Incomplete response from external API: original_text={'present' if original_text else 'missing'}, summary={'present' if summary else 'missing'}, translated_summary={'present' if translated_summary else 'missing'}")
+            logger.debug(f"Incomplete response from external API: original_text={'present' if original_text else 'missing'}, summary={'present' if summary else 'missing'}, translated_summary={'present' if translated_summary else 'missing'}")
             return IndicSummarizePDFResponse(
                 original_text=original_text or "No text extracted",
                 summary=summary or "No summary provided",
@@ -1210,7 +1210,7 @@ async def indic_summarize_pdf(
                 processed_page=processed_page
             )
 
-        logger.info(f"Indic PDF summary completed in {time.time() - start_time:.2f} seconds, page processed: {processed_page}")
+        logger.debug(f"Indic PDF summary completed in {time.time() - start_time:.2f} seconds, page processed: {processed_page}")
         return IndicSummarizePDFResponse(
             original_text=original_text,
             summary=summary,
@@ -1581,7 +1581,7 @@ class ProxyFeatures:
     @staticmethod
     def log_request(request: Dict, client_ip: str) -> None:
         """Log incoming request details."""
-        logger.info(
+        logger.debug(
             f"Request from {client_ip}: model={request.get('model')}, "
             f"messages={len(request.get('messages', []))} messages"
         )
@@ -1589,7 +1589,7 @@ class ProxyFeatures:
     @staticmethod
     def log_response(response: Dict, processing_time: Optional[float] = None) -> None:
         """Log response details."""
-        logger.info(
+        logger.debug(
             f"Response: id={response.get('id')}, choices={len(response.get('choices', []))}, "
             f"processing_time={processing_time:.2f}s" if processing_time else "processing_time=unknown"
         )

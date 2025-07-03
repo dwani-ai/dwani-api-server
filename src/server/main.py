@@ -18,7 +18,6 @@ from pydantic import BaseModel, Field
 import requests
 from typing import List, Optional, Dict, Any
 
-from openai import AsyncOpenAI, OpenAIError
 
 from time import time
 from typing import Optional

@@ -267,14 +267,17 @@ class TTSService(ABC):
 class ExternalTTSService(TTSService):
     async def generate_speech(self, payload: dict) -> requests.Response:
         try:
-            base_url = f"{os.getenv('DWANI_API_BASE_URL_TTS')}/v1/audio/speech"
-            return requests.post(
-                base_url,
-                json=payload,
-                headers={"accept": "*/*", "Content-Type": "application/json"},
-                stream=True,
-                timeout=60
-            )
+            if(payload["language"] == "kannada"):
+                base_url = f"{os.getenv('DWANI_API_BASE_URL_TTS')}/v1/audio/speech"
+                return requests.post(
+                    base_url,
+                    json=payload,
+                    headers={"accept": "*/*", "Content-Type": "application/json"},
+                    stream=True,
+                    timeout=60
+                )
+            else:
+                print("hello-tts-function")
         except requests.Timeout:
             logger.error("External TTS API timeout")
             raise HTTPException(status_code=504, detail="External TTS API timeout")

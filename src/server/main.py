@@ -354,7 +354,11 @@ async def generate_audio(
             response_format="wav",
             speed=1,
         )
-
+# Prepare headers for the response
+        headers = {
+            "Content-Disposition": "attachment; filename=\"speech.mp3\"",
+            "Cache-Control": "no-cache",
+        }
         # Save the audio to a file
         output_file = Path("output.wav")
         with output_file.open("wb") as f:

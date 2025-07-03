@@ -542,7 +542,7 @@ async def transcribe_audio(
             transcription = response.text.strip()
             if transcription:
                 print(f"Transcribed: {transcription}")
-                return TranscriptionResponse(text=transcription)
+                return transcription
 
             else:
                 print("Transcription empty, try again.")

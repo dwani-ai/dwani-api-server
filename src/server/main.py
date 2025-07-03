@@ -536,7 +536,7 @@ async def transcribe_audio(
                 'model': (None, 'Systran/faster-whisper-small')
         }
         
-        response = httpx.post('http://loclahost:8000/v1/audio/transcriptions', files=files)
+        response = httpx.post('http://localhost:8000/v1/audio/transcriptions', files=files)
 
         if response.status_code == 200:
             transcription = response.text.strip()

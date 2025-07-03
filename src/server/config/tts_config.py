@@ -1,5 +1,4 @@
 import enum
-from pydantic_settings import BaseSettings
 
 SPEED = 1.0
 
@@ -12,7 +11,7 @@ class ResponseFormat(StrEnum):
     FLAC = "flac"
     WAV = "wav"
 
-class Config(BaseSettings):
+class Config():
     log_level: str = "info"
     model: str = "ai4bharat/indic-parler-tts"
     max_models: int = 1

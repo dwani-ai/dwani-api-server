@@ -539,11 +539,10 @@ async def transcribe_audio(
         response = httpx.post('http://localhost:8000/v1/audio/transcriptions', files=files)
 
         if response.status_code == 200:
-            transcription = response.text.strip()
+            transcription = response.json().get("text", "")
             if transcription:
-                logger.debug(f"Transcribed: {transcription}")
-                return transcription
-
+                logger.debug(f"Transcription completed in {time.time() - start_time:.2f} seconds")
+                return TranscriptionResponse(text=transcription)
             else:
                 logger.debug("Transcription empty, try again.")
                 raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")

@@ -316,7 +316,7 @@ async def generate_audio(
     request: Request,
     input: str = Query(..., description="Text to convert to speech (max 10000 characters)"),
     response_format: str = Query("mp3", description="Audio format (ignored, defaults to mp3 for external API)"),
-    language: str = Query(... ,"kannada"),
+    language: str = Query("kannada", description="language for TTS"),
     tts_service: TTSService = Depends(get_tts_service),
     background_tasks: BackgroundTasks = BackgroundTasks()
 ):

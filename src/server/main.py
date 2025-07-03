@@ -301,6 +301,8 @@ async def health_check():
 async def home():
     return RedirectResponse(url="/docs")
 
+from pathlib import Path
+from openai import OpenAI
 
 @app.post("/v1/audio/speech",
           summary="Generate Speech from Text",
@@ -332,58 +334,87 @@ async def generate_audio(
     })
     
 
-    if(language == "kannada"):
-        print(language)
-    else:
-        print(language)
-        
-    payload = {"text": input}
+        # Validate language
+    allowed_languages = ["kannada", "hindi", "tamil", "english","german" ]
+    if language not in allowed_languages:
+        raise HTTPException(status_code=400, detail=f"Language must be one of {allowed_languages}")
     
-    # Create a temporary file to store the audio
-    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
-    temp_file_path = temp_file.name
-    
-    try:
-        response = await tts_service.generate_speech(payload)
-        response.raise_for_status()
-        
-        # Write audio content to the temporary file
-        with open(temp_file_path, "wb") as f:
-            for chunk in response.iter_content(chunk_size=8192):
-                if chunk:
-                    f.write(chunk)
-        
-        # Prepare headers for the response
-        headers = {
-            "Content-Disposition": "attachment; filename=\"speech.mp3\"",
-            "Cache-Control": "no-cache",
-        }
-        
-        # Schedule file cleanup as a background task
-        def cleanup_file(file_path: str):
-            try:
-                if os.path.exists(file_path):
-                    os.unlink(file_path)
-                    logger.debug(f"Deleted temporary file: {file_path}")
-            except Exception as e:
-                logger.error(f"Failed to delete temporary file {file_path}: {str(e)}")
-        
-        background_tasks.add_task(cleanup_file, temp_file_path)
-        
-        # Return the file as a FileResponse
+    start_time = time.time()
+   
+    if( language in ["english", "german"]):
+        openai = OpenAI(base_url="http://localhost:8000/v1", api_key="cant-be-empty")
+        model_id = "speaches-ai/Kokoro-82M-v1.0-ONNX"
+        voice_id = "af_heart"
+
+        # Create speech
+        res = openai.audio.speech.create(
+            model=model_id,
+            voice=voice_id,
+            input=input,
+            response_format="wav",
+            speed=1,
+        )
+
+        # Save the audio to a file
+        output_file = Path("output.wav")
+        with output_file.open("wb") as f:
+            f.write(res.response.read())
+
         return FileResponse(
-            path=temp_file_path,
+            path=output_file,
             filename="speech.mp3",
             media_type="audio/mp3",
             headers=headers
         )
-    
-    except requests.HTTPError as e:
-        logger.error(f"External TTS request failed: {str(e)}")
-        raise HTTPException(status_code=502, detail=f"External TTS service error: {str(e)}")
-    finally:
-        # Close the temporary file to ensure it's fully written
-        temp_file.close()
+    else:    
+            
+        payload = {"text": input}
+        
+        # Create a temporary file to store the audio
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
+        temp_file_path = temp_file.name
+        
+        try:
+            response = await tts_service.generate_speech(payload)
+            response.raise_for_status()
+            
+            # Write audio content to the temporary file
+            with open(temp_file_path, "wb") as f:
+                for chunk in response.iter_content(chunk_size=8192):
+                    if chunk:
+                        f.write(chunk)
+            
+            # Prepare headers for the response
+            headers = {
+                "Content-Disposition": "attachment; filename=\"speech.mp3\"",
+                "Cache-Control": "no-cache",
+            }
+            
+            # Schedule file cleanup as a background task
+            def cleanup_file(file_path: str):
+                try:
+                    if os.path.exists(file_path):
+                        os.unlink(file_path)
+                        logger.debug(f"Deleted temporary file: {file_path}")
+                except Exception as e:
+                    logger.error(f"Failed to delete temporary file {file_path}: {str(e)}")
+            
+            background_tasks.add_task(cleanup_file, temp_file_path)
+            
+            # Return the file as a FileResponse
+            return FileResponse(
+                path=temp_file_path,
+                filename="speech.mp3",
+                media_type="audio/mp3",
+                headers=headers
+            )
+            
+        except requests.HTTPError as e:
+            logger.error(f"External TTS request failed: {str(e)}")
+            raise HTTPException(status_code=502, detail=f"External TTS service error: {str(e)}")
+        finally:
+            # Close the temporary file to ensure it's fully written
+            temp_file.close()
     
 @app.post("/v1/indic_chat",
           response_model=ChatResponse,

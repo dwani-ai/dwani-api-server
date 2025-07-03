@@ -267,18 +267,14 @@ class TTSService(ABC):
 class ExternalTTSService(TTSService):
     async def generate_speech(self, payload: dict) -> requests.Response:
         try:
-            print(payload)
-            if(payload["language"] == "kannada"):
-                base_url = f"{os.getenv('DWANI_API_BASE_URL_TTS')}/v1/audio/speech"
-                return requests.post(
-                    base_url,
-                    json=payload,
-                    headers={"accept": "*/*", "Content-Type": "application/json"},
-                    stream=True,
-                    timeout=60
-                )
-            else:
-                print("hello-tts-function")
+            base_url = f"{os.getenv('DWANI_API_BASE_URL_TTS')}/v1/audio/speech"
+            return requests.post(
+                base_url,
+                json=payload,
+                headers={"accept": "*/*", "Content-Type": "application/json"},
+                stream=True,
+                timeout=60
+            )
         except requests.Timeout:
             logger.error("External TTS API timeout")
             raise HTTPException(status_code=504, detail="External TTS API timeout")
@@ -320,6 +316,7 @@ async def generate_audio(
     request: Request,
     input: str = Query(..., description="Text to convert to speech (max 10000 characters)"),
     response_format: str = Query("mp3", description="Audio format (ignored, defaults to mp3 for external API)"),
+    language: str = Query(... ,"kannada"),
     tts_service: TTSService = Depends(get_tts_service),
     background_tasks: BackgroundTasks = BackgroundTasks()
 ):
@@ -334,6 +331,12 @@ async def generate_audio(
         "client_ip": request.client.host
     })
     
+
+    if(language == "kannada"):
+        print(language)
+    else:
+        print(language)
+        
     payload = {"text": input}
     
     # Create a temporary file to store the audio

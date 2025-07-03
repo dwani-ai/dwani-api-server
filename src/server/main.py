@@ -22,7 +22,7 @@ from typing import List, Optional, Dict, Any
 from time import time
 from typing import Optional
 # Assuming these are in your project structure
-from config.tts_config import SPEED, ResponseFormat, config as tts_config
+#from config.tts_config import SPEED, ResponseFormat, config as tts_config
 from config.logging_config import logger
 
 # FastAPI app setup with enhanced docs

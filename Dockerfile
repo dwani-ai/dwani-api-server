@@ -1,35 +1,27 @@
-# Build stage
-FROM python:3.10-slim AS builder
-
-WORKDIR /app
-
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PYTHONUNBUFFERED=1
-
-RUN apt-get update && apt-get install -y gcc curl && \
-    rm -rf /var/lib/apt/lists/*
-
-COPY requirements.txt .
-RUN pip install --user --no-cache-dir -r requirements.txt
-
-# Runtime stage
+# Use official Python runtime as base image
 FROM python:3.10-slim
 
 WORKDIR /app
 
-# Copy only the installed packages from builder
-COPY --from=builder /root/.local /root/.local
-COPY --from=builder /app/requirements.txt .
+# Set environment variables
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
 
-# Ensure scripts in .local are usable
-ENV PATH=/root/.local/bin:$PATH
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    gcc \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
 
-# Copy application code
-COPY . .
+# Install Python dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
-EXPOSE 7860
+# Create appuser and set permissions for /app and /data
+RUN useradd -ms /bin/bash appuser \
+    && mkdir -p /data \
+    && chown -R appuser:appuser /app /data
 
-HEALTHCHECK --interval=30s --timeout=3s \
-  CMD curl -f http://localhost:7860/v1/health || exit 1
+USER appuser
 
 CMD ["python", "-m" , "src.app.main", "--host", "0.0.0.0", "--port", "7860"]

@@ -44,7 +44,7 @@ logging_config = {
         "file": {
             "class": "logging.handlers.RotatingFileHandler",
             "formatter": "simple",
-            "filename": "dhwani_api.log",
+            "filename": "dwani_api.log",
             "maxBytes": 10 * 1024 * 1024,  # 10MB
             "backupCount": 5,
         },
@@ -63,8 +63,8 @@ logger = logging.getLogger("indic_all_server")
 
 # FastAPI app setup with enhanced docs
 app = FastAPI(
-    title="Dhwani API",
-    description="A multilingual AI-powered API supporting Indian languages for chat, text-to-speech, audio processing, and transcription.",
+    title="dwani.ai API",
+    description="A multimodal Inference API desgined for Privacy",
     version="1.0.0",
     redirect_slashes=False,
     openapi_tags=[

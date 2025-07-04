@@ -17,6 +17,9 @@ RUN apt-get update && apt-get install -y \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+COPY . .
+
+
 # Create appuser and set permissions for /app and /data
 RUN useradd -ms /bin/bash appuser \
     && mkdir -p /data \
@@ -24,4 +27,4 @@ RUN useradd -ms /bin/bash appuser \
 
 USER appuser
 
-CMD ["python", "-m" , "src.app.main", "--host", "0.0.0.0", "--port", "7860"]
+CMD ["python", "-m" , "src.server.main", "--host", "0.0.0.0", "--port", "80"]

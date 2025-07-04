@@ -23,7 +23,43 @@ from time import time
 from typing import Optional
 # Assuming these are in your project structure
 #from config.tts_config import SPEED, ResponseFormat, config as tts_config
-from config.logging_config import logger
+#from config.logging_config import logger
+
+import logging
+import logging.config
+from logging.handlers import RotatingFileHandler
+
+logging_config = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "simple": {"format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s"},
+    },
+    "handlers": {
+        "stdout": {
+            "class": "logging.StreamHandler",
+            "formatter": "simple",
+            "stream": "ext://sys.stdout",
+        },
+        "file": {
+            "class": "logging.handlers.RotatingFileHandler",
+            "formatter": "simple",
+            "filename": "dhwani_api.log",
+            "maxBytes": 10 * 1024 * 1024,  # 10MB
+            "backupCount": 5,
+        },
+    },
+    "loggers": {
+        "root": {
+            "level": "INFO",
+            "handlers": ["stdout", "file"],
+        },
+    },
+}
+
+logging.config.dictConfig(logging_config)
+logger = logging.getLogger("indic_all_server")
+
 
 # FastAPI app setup with enhanced docs
 app = FastAPI(

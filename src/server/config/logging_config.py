@@ -1,7 +1,6 @@
 import logging
 import logging.config
 from logging.handlers import RotatingFileHandler
-from .tts_config import config
 
 logging_config = {
     "version": 1,
@@ -25,7 +24,7 @@ logging_config = {
     },
     "loggers": {
         "root": {
-            "level": config.log_level.upper(),
+            "level": "INFO",
             "handlers": ["stdout", "file"],
         },
     },

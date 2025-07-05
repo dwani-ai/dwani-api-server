@@ -193,7 +193,9 @@ app.add_middleware(
     allow_origins=[ "https://*.hf.space",
         "https://dwani.ai",
         "https://*.dwani.ai",
-        "https://dwani-*.hf.space"],
+        "https://dwani-*.hf.space",
+        "http://localhost:11080"
+        ],
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],

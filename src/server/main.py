@@ -1065,7 +1065,7 @@ async def extract_text_all(
         "client_ip": request.client.host
     })
 
-    external_url = f"{os.getenv('DWANI_API_BASE_URL_PDF')}/extract-text/"
+    external_url = f"{os.getenv('DWANI_API_BASE_URL_PDF')}/extract-text-all/"
     start_time = time.time()
 
     try:
@@ -1085,7 +1085,7 @@ async def extract_text_all(
         response_data = response.json()
         extracted_text = response_data.get("page_contents", "")
         if not extracted_text:
-            logger.warning("No page_content found in external API response")
+            logger.warning("No page_contents found in external API response")
             extracted_text = ""
 
         logger.debug(f"PDF text extraction completed in {time.time() - start_time:.2f} seconds")

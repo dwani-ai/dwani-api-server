@@ -134,6 +134,16 @@ class PDFTextExtractionResponse(BaseModel):
         }
 
 
+class PDFTextExtractionAllResponse(BaseModel):
+    page_content: List = Field(..., description="Extracted text from the specified PDF page")
+
+    class Config:
+        schema_extra = {
+            "example": {
+                "page_content": "Google Interview Preparation Guide\nCustomer Engineer Specialist\n\nOur hiring process\n..."
+            }
+        }
+
 class DocumentProcessPage(BaseModel):
     processed_page: int = Field(..., description="Page number of the extracted text")
     page_content: str = Field(..., description="Extracted text from the page")
@@ -1038,12 +1048,12 @@ async def extract_text(
         raise HTTPException(status_code=500, detail="Invalid response format from external API")
 
 @app.post("/v1/extract-text-all",
-          response_model=PDFTextExtractionResponse,
+          response_model=PDFTextExtractionAllResponse,
           summary="Extract Text from PDF",
           description="Extract text from a specified page of a PDF file by calling an external API.",
           tags=["PDF"],
           responses={
-              200: {"description": "Extracted text", "model": PDFTextExtractionResponse},
+              200: {"description": "Extracted text", "model": PDFTextExtractionAllResponse},
               400: {"description": "Invalid PDF or page number"},
               500: {"description": "External API error"},
               504: {"description": "External API timeout"}
@@ -1089,7 +1099,7 @@ async def extract_text_all(
             extracted_text = ""
 
         logger.debug(f"PDF text extraction completed in {time.time() - start_time:.2f} seconds")
-        return PDFTextExtractionResponse(page_content=extracted_text)
+        return PDFTextExtractionAllResponse(page_content=extracted_text)
 
     except requests.Timeout:
         logger.error("External PDF extraction API timed out")

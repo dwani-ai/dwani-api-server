@@ -1089,7 +1089,7 @@ async def extract_text_all(
             extracted_text = ""
 
         logger.debug(f"PDF text extraction completed in {time.time() - start_time:.2f} seconds")
-        return PDFTextExtractionResponse(page_content=extracted_text.strip())
+        return PDFTextExtractionResponse(page_content=extracted_text)
 
     except requests.Timeout:
         logger.error("External PDF extraction API timed out")

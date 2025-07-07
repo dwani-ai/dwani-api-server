@@ -305,33 +305,6 @@ class VisualQueryResponse(BaseModel):
     class Config:
         schema_extra = {"example": {"answer": "The image shows a screenshot of a webpage."}}
 
-# TTS Service Interface
-class TTSService(ABC):
-    @abstractmethod
-    async def generate_speech(self, payload: dict) -> requests.Response:
-        pass
-
-class ExternalTTSService(TTSService):
-    async def generate_speech(self, payload: dict) -> requests.Response:
-        try:
-            base_url = f"{os.getenv('DWANI_API_BASE_URL_TTS')}/v1/audio/speech"
-            return requests.post(
-                base_url,
-                json=payload,
-                headers={"accept": "*/*", "Content-Type": "application/json"},
-                stream=True,
-                timeout=60
-            )
-        except requests.Timeout:
-            logger.error("External TTS API timeout")
-            raise HTTPException(status_code=504, detail="External TTS API timeout")
-        except requests.RequestException as e:
-            logger.error(f"External TTS API error: {str(e)}")
-            raise HTTPException(status_code=502, detail=f"External TTS service error: {str(e)}")
-
-def get_tts_service() -> TTSService:
-    return ExternalTTSService()
-
 # Endpoints with enhanced Swagger docs
 @app.get("/v1/health", 
          summary="Check API Health",
@@ -366,7 +339,6 @@ async def generate_audio(
     input: str = Query(..., description="Text to convert to speech (max 10000 characters)"),
     response_format: str = Query("mp3", description="Audio format (ignored, defaults to mp3 for external API)"),
     language: str = Query("kannada", description="language for TTS"),
-    tts_service: TTSService = Depends(get_tts_service),
     background_tasks: BackgroundTasks = BackgroundTasks()
 ):
     if not input.strip():
@@ -426,8 +398,14 @@ async def generate_audio(
         temp_file_path = temp_file.name
         
         try:
-            response = await tts_service.generate_speech(payload)
-            response.raise_for_status()
+            base_url = f"{os.getenv('DWANI_API_BASE_URL_TTS')}/v1/audio/speech"
+            response = requests.post(
+                base_url,
+                json=payload,
+                headers={"accept": "*/*", "Content-Type": "application/json"},
+                stream=True,
+                timeout=60
+            )
             
             # Write audio content to the temporary file
             with open(temp_file_path, "wb") as f:

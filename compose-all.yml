@@ -1,0 +1,73 @@
+version: '3.8'
+services:
+  app:
+    image: dwani/api-server:latest
+    environment:
+      - DWANI_API_BASE_URL_PDF=http://pdf-service:8001
+      - DWANI_API_BASE_URL_VISION=http://vision-service:8002
+      - DWANI_API_BASE_URL_LLM=http://llm-service:8003
+      - DWANI_API_BASE_URL_LLM_QWEN=http://llm-qwen-service:8004
+      - DWANI_API_BASE_URL_TTS=http://tts-service:8005
+      - DWANI_API_BASE_URL_ASR=http://asr-service:8006
+      - DWANI_API_BASE_URL_TRANSLATE=http://translate-service:8007
+      - DWANI_API_BASE_URL_S2S=http://s2s-service:8008
+      - DWANI_AI_LLM_URL=http://llm-server:7860
+      - ENVIRONMENT=production
+      - LOG_LEVEL=INFO
+    ports:
+      - "8000:8000"
+    depends_on:
+      - pdf-service
+      - vision-service
+      - llm-service
+      - llm-qwen-service
+      - tts-service
+      - asr-service
+      - translate-service
+      - s2s-service
+      - llm-server
+
+  pdf-service:
+    image: dwani/pdf-service:latest  # Replace with actual image
+    ports:
+      - "8001:8001"
+
+  vision-service:
+    image: dwani/vision-service:latest  # Replace with actual image
+    ports:
+      - "8002:8002"
+
+  llm-service:
+    image: dwani/llm-service:latest  # Replace with actual image
+    ports:
+      - "8003:8003"
+
+  llm-qwen-service:
+    image: dwani/llm-qwen-service:latest  # Replace with actual image
+    ports:
+      - "8004:8004"
+
+  tts-service:
+    image: dwani/tts-service:latest  # Replace with actual image
+    ports:
+      - "8005:8005"
+
+  asr-service:
+    image: dwani/asr-service:latest  # Replace with actual image
+    ports:
+      - "8006:8006"
+
+  translate-service:
+    image: dwani/translate-service:latest  # Replace with actual image
+    ports:
+      - "8007:8007"
+
+  s2s-service:
+    image: dwani/s2s-service:latest  # Replace with actual image
+    ports:
+      - "8008:8008"
+
+  llm-server:
+    image: dwani/llm-server:latest  # Replace with actual image
+    ports:
+      - "7860:7860"

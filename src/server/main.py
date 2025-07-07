@@ -18,18 +18,53 @@ from pydantic import BaseModel, Field
 import requests
 from typing import List, Optional, Dict, Any
 
-from openai import AsyncOpenAI, OpenAIError
 
 from time import time
 from typing import Optional
 # Assuming these are in your project structure
-from config.tts_config import SPEED, ResponseFormat, config as tts_config
-from config.logging_config import logger
+#from config.tts_config import SPEED, ResponseFormat, config as tts_config
+#from config.logging_config import logger
+
+import logging
+import logging.config
+from logging.handlers import RotatingFileHandler
+
+logging_config = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "simple": {"format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s"},
+    },
+    "handlers": {
+        "stdout": {
+            "class": "logging.StreamHandler",
+            "formatter": "simple",
+            "stream": "ext://sys.stdout",
+        },
+        "file": {
+            "class": "logging.handlers.RotatingFileHandler",
+            "formatter": "simple",
+            "filename": "dwani_api.log",
+            "maxBytes": 10 * 1024 * 1024,  # 10MB
+            "backupCount": 5,
+        },
+    },
+    "loggers": {
+        "root": {
+            "level": "INFO",
+            "handlers": ["stdout", "file"],
+        },
+    },
+}
+
+logging.config.dictConfig(logging_config)
+logger = logging.getLogger("indic_all_server")
+
 
 # FastAPI app setup with enhanced docs
 app = FastAPI(
-    title="Dhwani API",
-    description="A multilingual AI-powered API supporting Indian languages for chat, text-to-speech, audio processing, and transcription.",
+    title="dwani.ai API",
+    description="A multimodal Inference API desgined for Privacy",
     version="1.0.0",
     redirect_slashes=False,
     openapi_tags=[
@@ -99,6 +134,16 @@ class PDFTextExtractionResponse(BaseModel):
         }
 
 
+class PDFTextExtractionAllResponse(BaseModel):
+    page_content: List = Field(..., description="Extracted text from the specified PDF page")
+
+    class Config:
+        schema_extra = {
+            "example": {
+                "page_content": "Google Interview Preparation Guide\nCustomer Engineer Specialist\n\nOur hiring process\n..."
+            }
+        }
+
 class DocumentProcessPage(BaseModel):
     processed_page: int = Field(..., description="Page number of the extracted text")
     page_content: str = Field(..., description="Extracted text from the page")
@@ -148,7 +193,9 @@ app.add_middleware(
     allow_origins=[ "https://*.hf.space",
         "https://dwani.ai",
         "https://*.dwani.ai",
-        "https://dwani-*.hf.space"],
+        "https://dwani-*.hf.space",
+        "http://localhost:11080"
+        ],
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -174,7 +221,7 @@ class AudioProcessingResponse(BaseModel):
         schema_extra = {"example": {"result": "Processed audio output"}} 
 
 class ChatRequest(BaseModel):
-    prompt: str = Field(..., description="Prompt for chat (max 1000 characters)", max_length=1000)
+    prompt: str = Field(..., description="Prompt for chat (max 10000 characters)", max_length=10000)
     src_lang: str = Field(..., description="Source language code")
     tgt_lang: str = Field(..., description="Target language code")
     model: str = Field(default="gemma3", description="LLM model")
@@ -190,7 +237,7 @@ class ChatRequest(BaseModel):
         }
 
 class ChatDirectRequest(BaseModel):
-    prompt: str = Field(..., description="Prompt for chat (max 1000 characters)", max_length=1000)
+    prompt: str = Field(..., description="Prompt for chat (max 10000 characters)", max_length=10000)
     model: str = Field(default="gemma3", description="LLM model")
     system_prompt: str = Field(default="", description="System prompt")
 
@@ -258,33 +305,6 @@ class VisualQueryResponse(BaseModel):
     class Config:
         schema_extra = {"example": {"answer": "The image shows a screenshot of a webpage."}}
 
-# TTS Service Interface
-class TTSService(ABC):
-    @abstractmethod
-    async def generate_speech(self, payload: dict) -> requests.Response:
-        pass
-
-class ExternalTTSService(TTSService):
-    async def generate_speech(self, payload: dict) -> requests.Response:
-        try:
-            base_url = f"{os.getenv('DWANI_API_BASE_URL_TTS')}/v1/audio/speech"
-            return requests.post(
-                base_url,
-                json=payload,
-                headers={"accept": "*/*", "Content-Type": "application/json"},
-                stream=True,
-                timeout=60
-            )
-        except requests.Timeout:
-            logger.error("External TTS API timeout")
-            raise HTTPException(status_code=504, detail="External TTS API timeout")
-        except requests.RequestException as e:
-            logger.error(f"External TTS API error: {str(e)}")
-            raise HTTPException(status_code=502, detail=f"External TTS service error: {str(e)}")
-
-def get_tts_service() -> TTSService:
-    return ExternalTTSService()
-
 # Endpoints with enhanced Swagger docs
 @app.get("/v1/health", 
          summary="Check API Health",
@@ -301,6 +321,8 @@ async def health_check():
 async def home():
     return RedirectResponse(url="/docs")
 
+from pathlib import Path
+from openai import OpenAI
 
 @app.post("/v1/audio/speech",
           summary="Generate Speech from Text",
@@ -314,15 +336,15 @@ async def home():
           })
 async def generate_audio(
     request: Request,
-    input: str = Query(..., description="Text to convert to speech (max 1000 characters)"),
+    input: str = Query(..., description="Text to convert to speech (max 10000 characters)"),
     response_format: str = Query("mp3", description="Audio format (ignored, defaults to mp3 for external API)"),
-    tts_service: TTSService = Depends(get_tts_service),
+    language: str = Query("kannada", description="language for TTS"),
     background_tasks: BackgroundTasks = BackgroundTasks()
 ):
     if not input.strip():
         raise HTTPException(status_code=400, detail="Input cannot be empty")
-    if len(input) > 1000:
-        raise HTTPException(status_code=400, detail="Input cannot exceed 1000 characters")
+    if len(input) > 10000:
+        raise HTTPException(status_code=400, detail="Input cannot exceed 10000 characters")
     
     logger.debug("Processing speech request", extra={
         "endpoint": "/v1/audio/speech",
@@ -330,53 +352,98 @@ async def generate_audio(
         "client_ip": request.client.host
     })
     
-    payload = {"text": input}
+
+        # Validate language
+    allowed_languages = ["kannada", "hindi", "tamil", "english","german" ]
+    if language not in allowed_languages:
+        raise HTTPException(status_code=400, detail=f"Language must be one of {allowed_languages}")
     
-    # Create a temporary file to store the audio
-    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
-    temp_file_path = temp_file.name
-    
-    try:
-        response = await tts_service.generate_speech(payload)
-        response.raise_for_status()
-        
-        # Write audio content to the temporary file
-        with open(temp_file_path, "wb") as f:
-            for chunk in response.iter_content(chunk_size=8192):
-                if chunk:
-                    f.write(chunk)
-        
-        # Prepare headers for the response
+    start_time = time.time()
+   
+    if( language in ["english", "german"]):
+        openai = OpenAI(base_url="http://localhost:8000/v1", api_key="cant-be-empty")
+        model_id = "speaches-ai/Kokoro-82M-v1.0-ONNX"
+        voice_id = "af_heart"
+
+        # Create speech
+        res = openai.audio.speech.create(
+            model=model_id,
+            voice=voice_id,
+            input=input,
+            response_format="wav",
+            speed=1,
+        )
+# Prepare headers for the response
         headers = {
             "Content-Disposition": "attachment; filename=\"speech.mp3\"",
             "Cache-Control": "no-cache",
         }
-        
-        # Schedule file cleanup as a background task
-        def cleanup_file(file_path: str):
-            try:
-                if os.path.exists(file_path):
-                    os.unlink(file_path)
-                    logger.debug(f"Deleted temporary file: {file_path}")
-            except Exception as e:
-                logger.error(f"Failed to delete temporary file {file_path}: {str(e)}")
-        
-        background_tasks.add_task(cleanup_file, temp_file_path)
-        
-        # Return the file as a FileResponse
+        # Save the audio to a file
+        output_file = Path("output.wav")
+        with output_file.open("wb") as f:
+            f.write(res.response.read())
+
         return FileResponse(
-            path=temp_file_path,
+            path=output_file,
             filename="speech.mp3",
             media_type="audio/mp3",
             headers=headers
         )
-    
-    except requests.HTTPError as e:
-        logger.error(f"External TTS request failed: {str(e)}")
-        raise HTTPException(status_code=502, detail=f"External TTS service error: {str(e)}")
-    finally:
-        # Close the temporary file to ensure it's fully written
-        temp_file.close()
+    else:    
+            
+        payload = {"text": input}
+        
+        # Create a temporary file to store the audio
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
+        temp_file_path = temp_file.name
+        
+        try:
+            base_url = f"{os.getenv('DWANI_API_BASE_URL_TTS')}/v1/audio/speech"
+            response = requests.post(
+                base_url,
+                json=payload,
+                headers={"accept": "*/*", "Content-Type": "application/json"},
+                stream=True,
+                timeout=60
+            )
+            
+            # Write audio content to the temporary file
+            with open(temp_file_path, "wb") as f:
+                for chunk in response.iter_content(chunk_size=8192):
+                    if chunk:
+                        f.write(chunk)
+            
+            # Prepare headers for the response
+            headers = {
+                "Content-Disposition": "attachment; filename=\"speech.mp3\"",
+                "Cache-Control": "no-cache",
+            }
+            
+            # Schedule file cleanup as a background task
+            def cleanup_file(file_path: str):
+                try:
+                    if os.path.exists(file_path):
+                        os.unlink(file_path)
+                        logger.debug(f"Deleted temporary file: {file_path}")
+                except Exception as e:
+                    logger.error(f"Failed to delete temporary file {file_path}: {str(e)}")
+            
+            background_tasks.add_task(cleanup_file, temp_file_path)
+            
+            # Return the file as a FileResponse
+            return FileResponse(
+                path=temp_file_path,
+                filename="speech.mp3",
+                media_type="audio/mp3",
+                headers=headers
+            )
+            
+        except requests.HTTPError as e:
+            logger.error(f"External TTS request failed: {str(e)}")
+            raise HTTPException(status_code=502, detail=f"External TTS service error: {str(e)}")
+        finally:
+            # Close the temporary file to ensure it's fully written
+            temp_file.close()
     
 @app.post("/v1/indic_chat",
           response_model=ChatResponse,
@@ -394,8 +461,8 @@ async def chat_v2(
 ):
     if not chat_request.prompt.strip():
         raise HTTPException(status_code=400, detail="Prompt cannot be empty")
-    if len(chat_request.prompt) > 1000:
-        raise HTTPException(status_code=400, detail="Prompt cannot exceed 1000 characters")
+    if len(chat_request.prompt) > 10000:
+        raise HTTPException(status_code=400, detail="Prompt cannot exceed 10000 characters")
 
     # Validate model parameter
     valid_models = ["gemma3", "moondream", "qwen2.5vl", "qwen3", "sarvam-m", "deepseek-r1"]
@@ -459,8 +526,8 @@ async def chat_direct(
 ):
     if not chat_request.prompt.strip():
         raise HTTPException(status_code=400, detail="Prompt cannot be empty")
-    if len(chat_request.prompt) > 1000:
-        raise HTTPException(status_code=400, detail="Prompt cannot exceed 1000 characters")
+    if len(chat_request.prompt) > 10000:
+        raise HTTPException(status_code=400, detail="Prompt cannot exceed 10000 characters")
 
     # Validate model parameter
     valid_models = ["gemma3", "moondream", "qwen2.5vl", "qwen3", "sarvam-m", "deepseek-r1"]
@@ -507,7 +574,7 @@ async def chat_direct(
         logger.error(f"Error processing request: {str(e)}")
         raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
 
-
+import httpx
 @app.post("/v1/transcribe/", 
           response_model=TranscriptionResponse,
           summary="Transcribe Audio File",
@@ -520,37 +587,60 @@ async def chat_direct(
           })
 async def transcribe_audio(
     file: UploadFile = File(..., description="Audio file to transcribe"),
-    language: str = Query(..., description="Language of the audio (kannada, hindi, tamil)")
+    language: str = Query(..., description="Language of the audio (kannada, hindi, tamil, english, german)")
 ):
     # Validate language
-    allowed_languages = ["kannada", "hindi", "tamil"]
+    allowed_languages = ["kannada", "hindi", "tamil", "english","german" ]
     if language not in allowed_languages:
         raise HTTPException(status_code=400, detail=f"Language must be one of {allowed_languages}")
     
-    start_time = time()
-    try:
+    start_time = time.time()
+   
+    if( language in ["english", "german"]):
+        
         file_content = await file.read()
-        files = {"file": (file.filename, file_content, file.content_type)}
+        files = {"file": (file.filename, file_content, file.content_type),
+#                'model': (None, 'Systran/faster-whisper-large-v3')
+                'model': (None, 'Systran/faster-whisper-small')
+        }
         
-        external_url = f"{os.getenv('DWANI_API_BASE_URL_ASR')}/transcribe/?language={language}"
-        response = requests.post(
-            external_url,
-            files=files,
-            headers={"accept": "application/json"},
-            timeout=60
-        )
-        response.raise_for_status()
+        response = httpx.post('http://localhost:8000/v1/audio/transcriptions', files=files, timeout=60.0)
+
+        if response.status_code == 200:
+            transcription = response.json().get("text", "")
+            if transcription:
+                logger.debug(f"Transcription completed in {time.time() - start_time:.2f} seconds")
+                return TranscriptionResponse(text=transcription)
+            else:
+                logger.debug("Transcription empty, try again.")
+                raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")
+        else:
+            logger.debug(f"Transcription error: {response.status_code} - {response.text}")
+            raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")
+    else: 
+        try:
+            file_content = await file.read()
+            files = {"file": (file.filename, file_content, file.content_type)}
+            
+            external_url = f"{os.getenv('DWANI_API_BASE_URL_ASR')}/transcribe/?language={language}"
+            response = requests.post(
+                external_url,
+                files=files,
+                headers={"accept": "application/json"},
+                timeout=60
+            )
+            response.raise_for_status()
+            
+            transcription = response.json().get("text", "")
+            logger.debug(f"Transcription completed in {time.time() - start_time:.2f} seconds")
+            return TranscriptionResponse(text=transcription)
         
-        transcription = response.json().get("text", "")
-        logger.debug(f"Transcription completed in {time() - start_time:.2f} seconds")
-        return TranscriptionResponse(text=transcription)
-    
-    except requests.Timeout:
-        logger.error("Transcription service timed out")
-        raise HTTPException(status_code=504, detail="Transcription service timeout")
-    except requests.RequestException as e:
-        logger.error(f"Transcription request failed: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")
+        except requests.Timeout:
+            logger.error("Transcription service timed out")
+            raise HTTPException(status_code=504, detail="Transcription service timeout")
+        except requests.RequestException as e:
+            logger.error(f"Transcription request failed: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")
 
 @app.post("/v1/translate", 
           response_model=TranslationResponse,
@@ -650,8 +740,8 @@ async def visual_query(
     # Validate query
     if not query.strip():
         raise HTTPException(status_code=400, detail="Query cannot be empty")
-    if len(query) > 1000:
-        raise HTTPException(status_code=400, detail="Query cannot exceed 1000 characters")
+    if len(query) > 10000:
+        raise HTTPException(status_code=400, detail="Query cannot exceed 10000 characters")
 
     # Validate language codes
     supported_languages = ["kan_Knda", "hin_Deva", "tam_Taml", "tel_Telu", "eng_Latn", "deu_Latn"]
@@ -663,7 +753,7 @@ async def visual_query(
     # Validate model
     validate_model(model)
 
-    logger.info("Processing visual query request", extra={
+    logger.debug("Processing visual query request", extra={
         "endpoint": "/v1/indic_visual_query",
         "query_length": len(query),
         "file_name": file.filename,
@@ -740,14 +830,14 @@ async def visual_query_direct(
     # Validate query
     if not query.strip():
         raise HTTPException(status_code=400, detail="Query cannot be empty")
-    if len(query) > 1000:
-        raise HTTPException(status_code=400, detail="Query cannot exceed 1000 characters")
+    if len(query) > 10000:
+        raise HTTPException(status_code=400, detail="Query cannot exceed 10000 characters")
 
  
     # Validate model
     validate_model(model)
 
-    logger.info("Processing visual query direct request", extra={
+    logger.debug("Processing visual query direct request", extra={
         "endpoint": "/v1/visual_query_direct",
         "query_length": len(query),
         "file_name": file.filename,
@@ -903,7 +993,7 @@ async def extract_text(
     })
 
     external_url = f"{os.getenv('DWANI_API_BASE_URL_PDF')}/extract-text/"
-    start_time = time()
+    start_time = time.time()
 
     try:
         file_content = await file.read()
@@ -925,8 +1015,72 @@ async def extract_text(
             logger.warning("No page_content found in external API response")
             extracted_text = ""
 
-        logger.debug(f"PDF text extraction completed in {time() - start_time:.2f} seconds")
+        logger.debug(f"PDF text extraction completed in {time.time() - start_time:.2f} seconds")
         return PDFTextExtractionResponse(page_content=extracted_text.strip())
+
+    except requests.Timeout:
+        logger.error("External PDF extraction API timed out")
+        raise HTTPException(status_code=504, detail="External API timeout")
+    except requests.RequestException as e:
+        logger.error(f"External PDF extraction API error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"External API error: {str(e)}")
+    except ValueError as e:
+        logger.error(f"Invalid JSON response from external API: {str(e)}")
+        raise HTTPException(status_code=500, detail="Invalid response format from external API")
+
+@app.post("/v1/extract-text-all",
+          response_model=PDFTextExtractionAllResponse,
+          summary="Extract Text from PDF",
+          description="Extract text from a specified page of a PDF file by calling an external API.",
+          tags=["PDF"],
+          responses={
+              200: {"description": "Extracted text", "model": PDFTextExtractionAllResponse},
+              400: {"description": "Invalid PDF or page number"},
+              500: {"description": "External API error"},
+              504: {"description": "External API timeout"}
+          })
+async def extract_text_all(
+    request: Request,
+    file: UploadFile = File(..., description="PDF file to extract text from"),
+    model: str = Query(default="gemma3", description="LLM model", enum=SUPPORTED_MODELS)
+):
+    if not file.filename.lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="Only PDF files supported")
+
+    validate_model(model)
+
+    logger.debug("Processing PDF text extraction ", extra={
+        "endpoint": "/v1/extract-text",
+        "file_name": file.filename,
+        "model": model,
+        "client_ip": request.client.host
+    })
+
+    external_url = f"{os.getenv('DWANI_API_BASE_URL_PDF')}/extract-text-all/"
+    start_time = time.time()
+
+    try:
+        file_content = await file.read()
+        files = {"file": (file.filename, file_content, file.content_type)}
+        data = {"model": model}
+
+        response = requests.post(
+            external_url,
+            files=files,
+            data=data,
+            headers={"accept": "application/json"},
+            timeout=60
+        )
+        response.raise_for_status()
+
+        response_data = response.json()
+        extracted_text = response_data.get("page_contents", "")
+        if not extracted_text:
+            logger.warning("No page_contents found in external API response")
+            extracted_text = ""
+
+        logger.debug(f"PDF text extraction completed in {time.time() - start_time:.2f} seconds")
+        return PDFTextExtractionAllResponse(page_content=extracted_text)
 
     except requests.Timeout:
         logger.error("External PDF extraction API timed out")
@@ -981,7 +1135,7 @@ async def extract_and_translate(
     })
 
     external_url = f"{os.getenv('DWANI_API_BASE_URL_PDF')}/indic-extract-text/"
-    start_time = time()
+    #start_time = time.time()
 
     try:
         file_content = await file.read()
@@ -1013,7 +1167,7 @@ async def extract_and_translate(
             translated_content=translated_content
         )
 
-        logger.debug(f"Indic extract text completed in {time() - start_time:.2f} seconds")
+        #logger.debug(f"Indic extract text completed in {time.time() - start_time:.2f} seconds")
         return DocumentProcessResponse(pages=[page])
 
     except requests.Timeout:
@@ -1062,7 +1216,7 @@ async def summarize_pdf(
     })
 
     external_url = f"{os.getenv('DWANI_API_BASE_URL_PDF')}/summarize-pdf"
-    start_time = time()
+    start_time = time.time()
 
     try:
         file_content = await file.read()
@@ -1091,7 +1245,7 @@ async def summarize_pdf(
                 processed_page=processed_page
             )
 
-        logger.debug(f"PDF summary completed in {time() - start_time:.2f} seconds")
+        logger.debug(f"PDF summary completed in {time.time() - start_time:.2f} seconds")
         return SummarizePDFResponse(
             original_text=original_text,
             summary=summary,
@@ -1128,7 +1282,7 @@ async def indic_summarize_pdf(
     tgt_lang: str = Form("kan_Knda", description="Target language code (e.g., kan_Knda)"),  # Default added
     model: str = Form(default="gemma3", description="LLM model", enum=SUPPORTED_MODELS)
 ):
-    logger.info(f"Processing indic summarize PDF: page_number={page_number}, model={model}, src_lang={src_lang}, tgt_lang={tgt_lang} and file={file.filename}")
+    logger.debug(f"Processing indic summarize PDF: page_number={page_number}, model={model}, src_lang={src_lang}, tgt_lang={tgt_lang} and file={file.filename}")
 
     if not file.filename.lower().endswith('.pdf'):
         raise HTTPException(status_code=400, detail="File must be a PDF")
@@ -1140,7 +1294,7 @@ async def indic_summarize_pdf(
     validate_language(src_lang, "source language")
     validate_language(tgt_lang, "target language")
 
-    logger.info("Processing Indic PDF summary request", extra={
+    logger.debug("Processing Indic PDF summary request", extra={
         "endpoint": "/v1/indic-summarize-pdf",
         "file_name": file.filename,
         "page_number": page_number,
@@ -1151,7 +1305,7 @@ async def indic_summarize_pdf(
     })
 
     external_url = f"{os.getenv('DWANI_API_BASE_URL_PDF')}/indic-summarize-pdf"
-    start_time = time()
+    start_time = time.time()
 
     try:
         file_content = await file.read()
@@ -1179,7 +1333,7 @@ async def indic_summarize_pdf(
         processed_page = response_data.get("processed_page", page_number)
 
         if not original_text or not summary or not translated_summary:
-            logger.info(f"Incomplete response from external API: original_text={'present' if original_text else 'missing'}, summary={'present' if summary else 'missing'}, translated_summary={'present' if translated_summary else 'missing'}")
+            logger.debug(f"Incomplete response from external API: original_text={'present' if original_text else 'missing'}, summary={'present' if summary else 'missing'}, translated_summary={'present' if translated_summary else 'missing'}")
             return IndicSummarizePDFResponse(
                 original_text=original_text or "No text extracted",
                 summary=summary or "No summary provided",
@@ -1187,7 +1341,7 @@ async def indic_summarize_pdf(
                 processed_page=processed_page
             )
 
-        logger.info(f"Indic PDF summary completed in {time() - start_time:.2f} seconds, page processed: {processed_page}")
+        logger.debug(f"Indic PDF summary completed in {time.time() - start_time:.2f} seconds, page processed: {processed_page}")
         return IndicSummarizePDFResponse(
             original_text=original_text,
             summary=summary,
@@ -1244,7 +1398,7 @@ async def custom_prompt_pdf(
     })
 
     external_url = f"{os.getenv('DWANI_API_BASE_URL_PDF')}/custom-prompt-pdf"
-    start_time = time()
+    start_time = time.time()
 
     try:
         file_content = await file.read()
@@ -1273,7 +1427,7 @@ async def custom_prompt_pdf(
                 processed_page=processed_page
             )
 
-        logger.debug(f"Custom prompt PDF completed in {time() - start_time:.2f} seconds")
+        logger.debug(f"Custom prompt PDF completed in {time.time() - start_time:.2f} seconds")
         return CustomPromptPDFResponse(
             original_text=original_text,
             response=custom_response,
@@ -1334,7 +1488,7 @@ async def indic_custom_prompt_pdf(
     })
 
     external_url = f"{os.getenv('DWANI_API_BASE_URL_PDF')}/indic-custom-prompt-pdf"
-    start_time = time()
+    start_time = time.time()
 
     try:
         file_content = await file.read()
@@ -1371,7 +1525,7 @@ async def indic_custom_prompt_pdf(
                 processed_page=processed_page
             )
 
-        logger.debug(f"Indic custom prompt PDF completed in {time() - start_time:.2f} seconds, page processed: {processed_page}")
+        logger.debug(f"Indic custom prompt PDF completed in {time.time() - start_time:.2f} seconds, page processed: {processed_page}")
         return IndicCustomPromptPDFResponse(
             original_text=original_text,
             response=custom_response,
@@ -1435,7 +1589,7 @@ async def indic_custom_prompt_kannada_pdf(
     })
 
     external_url = f"{os.getenv('DWANI_API_BASE_URL_PDF')}/indic-custom-prompt-kannada-pdf/"
-    start_time = time()
+    start_time = time.time()
 
     # Create a temporary file to store the generated PDF
     temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
@@ -1483,7 +1637,7 @@ async def indic_custom_prompt_kannada_pdf(
 
         background_tasks.add_task(cleanup_file, temp_file_path)
 
-        logger.debug(f"Kannada PDF generation completed in {time() - start_time:.2f} seconds")
+        logger.debug(f"Kannada PDF generation completed in {time.time() - start_time:.2f} seconds")
         return FileResponse(
             path=temp_file_path,
             filename="generated_kannada.pdf",
@@ -1558,7 +1712,7 @@ class ProxyFeatures:
     @staticmethod
     def log_request(request: Dict, client_ip: str) -> None:
         """Log incoming request details."""
-        logger.info(
+        logger.debug(
             f"Request from {client_ip}: model={request.get('model')}, "
             f"messages={len(request.get('messages', []))} messages"
         )
@@ -1566,7 +1720,7 @@ class ProxyFeatures:
     @staticmethod
     def log_response(response: Dict, processing_time: Optional[float] = None) -> None:
         """Log response details."""
-        logger.info(
+        logger.debug(
             f"Response: id={response.get('id')}, choices={len(response.get('choices', []))}, "
             f"processing_time={processing_time:.2f}s" if processing_time else "processing_time=unknown"
         )

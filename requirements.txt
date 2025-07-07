@@ -10,3 +10,4 @@ sqlalchemy
 passlib[bcrypt]
 pycryptodome
 openai
+httpx

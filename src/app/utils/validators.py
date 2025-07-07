@@ -1,5 +1,5 @@
 from fastapi import HTTPException
-from .models.requests import SUPPORTED_MODELS, SUPPORTED_LANGUAGES
+from ..models.requests import SUPPORTED_MODELS, SUPPORTED_LANGUAGES
 
 def validate_model(model: str) -> str:
     if model not in SUPPORTED_MODELS:

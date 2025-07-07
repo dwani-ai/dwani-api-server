@@ -600,10 +600,10 @@ async def transcribe_audio(
         
         file_content = await file.read()
         files = {"file": (file.filename, file_content, file.content_type),
-                'model': (None, 'Systran/faster-whisper-small')
+                'model': (None, 'Systran/faster-whisper-large-v3')
         }
         
-        response = httpx.post('http://localhost:8000/v1/audio/transcriptions', files=files)
+        response = httpx.post('http://localhost:8000/v1/audio/transcriptions', files=files, timeout=60.0)
 
         if response.status_code == 200:
             transcription = response.json().get("text", "")

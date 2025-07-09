@@ -1068,7 +1068,7 @@ async def extract_text_all(
             files=files,
             data=data,
             headers={"accept": "application/json"},
-            timeout=600
+            timeout=6000
         )
         response.raise_for_status()
 

@@ -147,6 +147,7 @@ class PDFTextExtractionAllResponse(BaseModel):
             }
         }
 
+
 class DocumentProcessPage(BaseModel):
     processed_page: int = Field(..., description="Page number of the extracted text")
     page_content: str = Field(..., description="Extracted text from the page")
@@ -1029,6 +1030,7 @@ async def extract_text(
     except ValueError as e:
         logger.error(f"Invalid JSON response from external API: {str(e)}")
         raise HTTPException(status_code=500, detail="Invalid response format from external API")
+    
 
 @app.post("/v1/extract-text-all",
           response_model=PDFTextExtractionAllResponse,
@@ -1051,8 +1053,8 @@ async def extract_text_all(
 
     validate_model(model)
 
-    logger.debug("Processing PDF text extraction ", extra={
-        "endpoint": "/v1/extract-text",
+    logger.debug("Processing PDF text extraction", extra={
+        "endpoint": "/v1/extract-text-all",
         "file_name": file.filename,
         "model": model,
         "client_ip": request.client.host
@@ -1076,13 +1078,22 @@ async def extract_text_all(
         response.raise_for_status()
 
         response_data = response.json()
-        extracted_text = response_data.get("page_contents", {})        
+        
+        # Validate response using Pydantic model
+        try:
+            validated_response = PDFTextExtractionAllResponse(**response_data)
+            extracted_text = validated_response.page_contents
+        except Exception as e:
+            logger.warning(f"Failed to validate response with Pydantic model: {str(e)}")
+            # Fallback to directly accessing page_contents
+            extracted_text = response_data.get("page_contents", {})
+        
         if not extracted_text:
             logger.warning("No page_contents found in external API response")
             extracted_text = {}
 
         logger.debug(f"PDF text extraction completed in {time.time() - start_time:.2f} seconds")
-        return PDFTextExtractionAllResponse(page_content=extracted_text)
+        return PDFTextExtractionAllResponse(page_contents=extracted_text)
 
     except requests.Timeout:
         logger.error("External PDF extraction API timed out")
@@ -1093,8 +1104,7 @@ async def extract_text_all(
     except ValueError as e:
         logger.error(f"Invalid JSON response from external API: {str(e)}")
         raise HTTPException(status_code=500, detail="Invalid response format from external API")
-
-
+    
 # Indic Extract Text Endpoint
 @app.post("/v1/indic-extract-text/",
           response_model=DocumentProcessResponse,

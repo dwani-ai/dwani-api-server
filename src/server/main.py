@@ -984,6 +984,7 @@ async def extract_text(
 
     validate_model(model)
 
+    print(page_number)
     logger.debug("Processing PDF text extraction request", extra={
         "endpoint": "/v1/extract-text",
         "file_name": file.filename,
@@ -1000,6 +1001,7 @@ async def extract_text(
         files = {"file": (file.filename, file_content, file.content_type)}
         data = {"page_number": page_number, "model": model}
 
+        print(data)
         response = requests.post(
             external_url,
             files=files,

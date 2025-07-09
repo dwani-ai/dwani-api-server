@@ -135,12 +135,15 @@ class PDFTextExtractionResponse(BaseModel):
 
 
 class PDFTextExtractionAllResponse(BaseModel):
-    page_content: List = Field(..., description="Extracted text from the specified PDF page")
+    page_contents: Dict[str, str] = Field(..., description="Extracted text from each PDF page, with page numbers as keys and text content as values")
 
     class Config:
         schema_extra = {
             "example": {
-                "page_content": "Google Interview Preparation Guide\nCustomer Engineer Specialist\n\nOur hiring process\n..."
+                "page_contents": {
+                    "0": "Google Interview Preparation Guide\nCustomer Engineer Specialist\n\nOur hiring process\n...",
+                    "1": "Page 2 content\nAdditional details about the interview process\n..."
+                }
             }
         }
 

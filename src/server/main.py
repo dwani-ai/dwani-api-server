@@ -1073,10 +1073,10 @@ async def extract_text_all(
         response.raise_for_status()
 
         response_data = response.json()
-        extracted_text = response_data.get("page_contents", "")
+        extracted_text = response_data.get("page_contents", {})        
         if not extracted_text:
             logger.warning("No page_contents found in external API response")
-            extracted_text = ""
+            extracted_text = {}
 
         logger.debug(f"PDF text extraction completed in {time.time() - start_time:.2f} seconds")
         return PDFTextExtractionAllResponse(page_content=extracted_text)

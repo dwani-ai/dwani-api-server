@@ -408,7 +408,7 @@ async def generate_audio(
                 json=payload,
                 headers={"accept": "*/*", "Content-Type": "application/json"},
                 stream=True,
-                timeout=60
+                timeout=90
             )
             
             # Write audio content to the temporary file
@@ -494,7 +494,7 @@ async def chat_v2(
                 "accept": "application/json",
                 "Content-Type": "application/json"
             },
-            timeout=60
+            timeout=90
         )
         response.raise_for_status()
 
@@ -558,7 +558,7 @@ async def chat_direct(
                 "accept": "application/json",
                 "Content-Type": "application/json"
             },
-            timeout=60
+            timeout=90
         )
         response.raise_for_status()
 
@@ -608,7 +608,7 @@ async def transcribe_audio(
                 'model': (None, 'Systran/faster-whisper-small')
         }
         
-        response = httpx.post('http://localhost:8000/v1/audio/transcriptions', files=files, timeout=60.0)
+        response = httpx.post('http://localhost:8000/v1/audio/transcriptions', files=files, timeout=90.0)
 
         if response.status_code == 200:
             transcription = response.json().get("text", "")
@@ -631,7 +631,7 @@ async def transcribe_audio(
                 external_url,
                 files=files,
                 headers={"accept": "application/json"},
-                timeout=60
+                timeout=90
             )
             response.raise_for_status()
             
@@ -691,7 +691,7 @@ async def translate(
                 "accept": "application/json",
                 "Content-Type": "application/json"
             },
-            timeout=60
+            timeout=90
         )
         response.raise_for_status()
 
@@ -787,7 +787,7 @@ async def visual_query(
             files=files,
             data=data,
             headers={"accept": "application/json"},
-            timeout=60
+            timeout=90
         )
         response.raise_for_status()
 
@@ -867,7 +867,7 @@ async def visual_query_direct(
             files=files,
             data=data,
             headers={"accept": "application/json"},
-            timeout=60
+            timeout=90
         )
         response.raise_for_status()
 
@@ -935,7 +935,7 @@ async def speech_to_speech(
             files=files,
             headers={"accept": "application/json"},
             stream=True,
-            timeout=60
+            timeout=90
         )
         response.raise_for_status()
 
@@ -1008,7 +1008,7 @@ async def extract_text(
             files=files,
             data=data,
             headers={"accept": "application/json"},
-            timeout=60
+            timeout=90
         )
         response.raise_for_status()
 
@@ -1073,7 +1073,8 @@ async def extract_text_all(
             files=files,
             data=data,
             headers={"accept": "application/json"},
-            timeout=6000
+            timeout=90
+
         )
         response.raise_for_status()
 
@@ -1164,7 +1165,7 @@ async def extract_and_translate(
             files=files,
             data=data,
             headers={"accept": "application/json"},
-            timeout=60
+            timeout=90
         )
         response.raise_for_status()
 
@@ -1240,7 +1241,7 @@ async def summarize_pdf(
             files=files,
             data=data,
             headers={"accept": "application/json"},
-            timeout=60
+            timeout=90
         )
         response.raise_for_status()
 
@@ -1334,7 +1335,7 @@ async def indic_summarize_pdf(
             files=files,
             data=data,
             headers={"accept": "application/json"},
-            timeout=60
+            timeout=90
         )
         response.raise_for_status()
 
@@ -1422,7 +1423,7 @@ async def custom_prompt_pdf(
             files=files,
             data=data,
             headers={"accept": "application/json"},
-            timeout=60
+            timeout=90
         )
         response.raise_for_status()
 
@@ -1518,7 +1519,7 @@ async def indic_custom_prompt_pdf(
             files=files,
             data=data,
             headers={"accept": "application/json"},
-            timeout=60
+            timeout=90
         )
         response.raise_for_status()
 
@@ -1622,7 +1623,7 @@ async def indic_custom_prompt_kannada_pdf(
             data=data,
             headers={"accept": "application/json"},
             stream=True,
-            timeout=60
+            timeout=90
         )
         response.raise_for_status()
 

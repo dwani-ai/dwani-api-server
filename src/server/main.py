@@ -1300,7 +1300,7 @@ async def indic_summarize_pdf(
     tgt_lang: str = Form("kan_Knda", description="Target language code (e.g., kan_Knda)"),  # Default added
     model: str = Form(default="gemma3", description="LLM model", enum=SUPPORTED_MODELS)
 ):
-    logger.debug(f"Processing indic summarize PDF: page_number={page_number}, model={model}, src_lang={src_lang}, tgt_lang={tgt_lang} and file={file.filename}")
+    logger.debug(f"Processing indic summarize PDF: page_number={page_number}, model={model}, tgt_lang={tgt_lang} and file={file.filename}")
 
     if not file.filename.lower().endswith('.pdf'):
         raise HTTPException(status_code=400, detail="File must be a PDF")
@@ -1442,7 +1442,7 @@ async def indic_summarize_pdf_all(
                 translated_summary=translated_summary or "No translated summary provided",
             )
 
-        logger.debug(f"Indic PDF summary completed in {time.time() - start_time:.2f} seconds, page processed: {processed_page}")
+        logger.debug(f"Indic PDF summary completed in {time.time() - start_time:.2f} seconds")
         return IndicSummarizeAllPDFResponse(
             original_text=original_text,
             summary=summary,

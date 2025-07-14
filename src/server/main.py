@@ -1376,12 +1376,12 @@ async def indic_summarize_pdf(
 
 # Indic Summarize PDF Endpoint (Updated)
 @app.post("/v1/indic-summarize-pdf-all",
-          response_model=IndicSummarizePDFResponse,
+          response_model=IndicSummarizeAllPDFResponse,
           summary="Summarize and Translate a Specific Page of a PDF",
           description="Summarize the content of a specific page of a PDF file and translate the summary into the target language using an external API.",
           tags=["PDF"],
           responses={
-              200: {"description": "Extracted text, summary, and translated summary", "model": IndicSummarizePDFResponse},
+              200: {"description": "Extracted text, summary, and translated summary", "model": IndicSummarizeAllPDFResponse},
               400: {"description": "Invalid PDF, page number, or language codes"},
               500: {"description": "External API error"},
               504: {"description": "External API timeout"}

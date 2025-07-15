@@ -1713,8 +1713,8 @@ async def indic_custom_prompt_pdf_all(
 
         response_data = response.json()
         original_text = response_data.get("original_text", "")
-        custom_response = response_data.get("response", "")
-        translated_response = response_data.get("translated_response", "")
+        custom_response = response_data.get("query_answer", "")
+        translated_response = response_data.get("translated_query_answer", "")
         
         if not original_text or not custom_response or not translated_response:
             logger.warning(f"Incomplete response from external API: original_text={'present' if original_text else 'missing'}, response={'present' if custom_response else 'missing'}, translated_response={'present' if translated_response else 'missing'}")

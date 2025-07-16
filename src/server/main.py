@@ -1565,7 +1565,7 @@ async def indic_custom_prompt_pdf(
     file: UploadFile = File(..., description="PDF file to process"),
     page_number: int = Form(..., description="Page number to process (1-based indexing)", ge=1),
     prompt: str = Form(..., description="Custom prompt to process the page content"),
-    src_lang: str = Form("eng_Latn", description="Source language code (e.g., eng_Latn)"),  # Default added
+    query_lang: str = Form("eng_Latn", description="Query language code (e.g., eng_Latn)"),  # Default added
     tgt_lang: str = Form("kan_Knda", description="Target language code (e.g., kan_Knda)"),  # Default added
     model: str = Form(default="gemma3", description="LLM model", enum=SUPPORTED_MODELS)
 ):
@@ -1578,7 +1578,7 @@ async def indic_custom_prompt_pdf(
 
     # Validate inputs
     validate_model(model)
-    validate_language(src_lang, "source language")
+    validate_language(query_lang, "query language")
     validate_language(tgt_lang, "target language")
 
     logger.debug("Processing indic custom prompt PDF request", extra={
@@ -1586,7 +1586,7 @@ async def indic_custom_prompt_pdf(
         "file_name": file.filename,
         "page_number": page_number,
         "prompt_length": len(prompt),
-        "src_lang": src_lang,
+        "query_lang": query_lang,
         "tgt_lang": tgt_lang,
         "model": model,
         "client_ip": request.client.host
@@ -1601,7 +1601,7 @@ async def indic_custom_prompt_pdf(
         data = {
             "page_number": str(page_number),
             "prompt": prompt,
-            "source_language": src_lang,
+            "query_language": query_lang,
             "target_language": tgt_lang,
             "model": model
         }

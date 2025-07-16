@@ -1616,6 +1616,8 @@ async def indic_custom_prompt_pdf(
         response.raise_for_status()
 
         response_data = response.json()
+
+        print(response_data)
         original_text = response_data.get("original_text", "")
         custom_response = response_data.get("response", "")
         translated_response = response_data.get("translated_response", "")

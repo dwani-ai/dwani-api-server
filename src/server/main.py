@@ -1606,8 +1606,6 @@ async def indic_custom_prompt_pdf(
             "model": model
         }
 
-        print(data)
-
         response = requests.post(
             external_url,
             files=files,

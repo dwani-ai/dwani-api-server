@@ -181,8 +181,8 @@ class CustomPromptPDFResponse(BaseModel):
 
 class IndicCustomPromptPDFResponse(BaseModel):
     original_text: str = Field(..., description="Extracted text from the specified page")
-    response: str = Field(..., description="Response based on the custom prompt")
-    translated_response: str = Field(..., description="Translated response in the target language")
+    query_answer: str = Field(..., description="Response based on the custom prompt")
+    translated_query_answer: str = Field(..., description="Translated response in the target language")
     processed_page: int = Field(..., description="Page number processed")
 
 class IndicCustomPromptPDFAllResponse(BaseModel):
@@ -1617,26 +1617,28 @@ async def indic_custom_prompt_pdf(
 
         response_data = response.json()
 
-        print(response_data)
         original_text = response_data.get("original_text", "")
-        custom_response = response_data.get("response", "")
-        translated_response = response_data.get("translated_response", "")
+        query_answer = response_data.get("query_answer", "")
+        translated_query_answer = response_data.get("translated_query_answer", "")
+
         processed_page = response_data.get("processed_page", page_number)
 
-        if not original_text or not custom_response or not translated_response:
-            logger.warning(f"Incomplete response from external API: original_text={'present' if original_text else 'missing'}, response={'present' if custom_response else 'missing'}, translated_response={'present' if translated_response else 'missing'}")
+        if not original_text or not query_answer or not translated_query_answer:
+            logger.warning(f"Incomplete response from external API: original_text={'present' if original_text else 'missing'}, query_answer={'present' if query_answer else 'missing'}, translated_query_answer={'present' if translated_query_answer else 'missing'}")
             return IndicCustomPromptPDFResponse(
                 original_text=original_text or "No text extracted",
-                response=custom_response or "No response provided",
-                translated_response=translated_response or "No translated response provided",
+                query_answer=query_answer or "No response provided",
+                translated_query_answer=translated_query_answer or "No translated response provided",
                 processed_page=processed_page
             )
 
+
+        
         logger.debug(f"Indic custom prompt PDF completed in {time.time() - start_time:.2f} seconds, page processed: {processed_page}")
         return IndicCustomPromptPDFResponse(
             original_text=original_text,
-            response=custom_response,
-            translated_response=translated_response,
+            query_answer=query_answer,
+            translated_query_answer=translated_query_answer,
             processed_page=processed_page
         )
 

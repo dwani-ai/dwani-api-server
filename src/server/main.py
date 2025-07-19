@@ -604,7 +604,7 @@ async def transcribe_audio(
     language: str = Query(..., description="Language of the audio (kannada, hindi, tamil, english, german)")
 ):
     # Validate language
-    allowed_languages = ["kannada", "hindi", "tamil", "english","german" ]
+    allowed_languages = ["kannada", "hindi", "tamil", "english","german", "telugu" , "marathi" ]
     if language not in allowed_languages:
         raise HTTPException(status_code=400, detail=f"Language must be one of {allowed_languages}")
     

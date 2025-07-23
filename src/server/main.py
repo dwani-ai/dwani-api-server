@@ -368,7 +368,7 @@ async def generate_audio(
     
 
         # Validate language
-    allowed_languages = ["kannada", "hindi", "tamil", "english","german", "marathi", "telugu" ]
+    allowed_languages = ["kannada", "hindi", "tamil", "english","german", "telugu", "marathi" ]
     if language not in allowed_languages:
         raise HTTPException(status_code=400, detail=f"Language must be one of {allowed_languages}")
     
@@ -1115,7 +1115,83 @@ async def extract_text_all(
     except ValueError as e:
         logger.error(f"Invalid JSON response from external API: {str(e)}")
         raise HTTPException(status_code=500, detail="Invalid response format from external API")
-    
+
+
+@app.post("/v1/extract-text-all-chunk",
+          response_model=PDFTextExtractionAllResponse,
+          summary="Extract Text from PDF",
+          description="Extract text from a specified page of a PDF file by calling an external API.",
+          tags=["PDF"],
+          responses={
+              200: {"description": "Extracted text", "model": PDFTextExtractionAllResponse},
+              400: {"description": "Invalid PDF or page number"},
+              500: {"description": "External API error"},
+              504: {"description": "External API timeout"}
+          })
+async def extract_text_all_chunk(
+    request: Request,
+    file: UploadFile = File(..., description="PDF file to extract text from"),
+    model: str = Query(default="gemma3", description="LLM model", enum=SUPPORTED_MODELS)
+):
+    if not file.filename.lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="Only PDF files supported")
+
+    validate_model(model)
+
+    logger.debug("Processing PDF text extraction", extra={
+        "endpoint": "/v1/extract-text-all-chunk",
+        "file_name": file.filename,
+        "model": model,
+        "client_ip": request.client.host
+    })
+
+    external_url = f"{os.getenv('DWANI_API_BASE_URL_PDF')}/extract-text-all-chunk/"
+    start_time = time.time()
+
+    try:
+        file_content = await file.read()
+        files = {"file": (file.filename, file_content, file.content_type)}
+        data = {"model": model}
+
+        response = requests.post(
+            external_url,
+            files=files,
+            data=data,
+            headers={"accept": "application/json"},
+            timeout=90
+
+        )
+        response.raise_for_status()
+
+        response_data = response.json()
+        
+        # Validate response using Pydantic model
+        try:
+            validated_response = PDFTextExtractionAllResponse(**response_data)
+            extracted_text = validated_response.page_contents
+        except Exception as e:
+            logger.warning(f"Failed to validate response with Pydantic model: {str(e)}")
+            # Fallback to directly accessing page_contents
+            extracted_text = response_data.get("page_contents", {})
+        
+        if not extracted_text:
+            logger.warning("No page_contents found in external API response")
+            extracted_text = {}
+
+        logger.debug(f"PDF text extraction completed in {time.time() - start_time:.2f} seconds")
+        return PDFTextExtractionAllResponse(page_contents=extracted_text)
+
+    except requests.Timeout:
+        logger.error("External PDF extraction API timed out")
+        raise HTTPException(status_code=504, detail="External API timeout")
+    except requests.RequestException as e:
+        logger.error(f"External PDF extraction API error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"External API error: {str(e)}")
+    except ValueError as e:
+        logger.error(f"Invalid JSON response from external API: {str(e)}")
+        raise HTTPException(status_code=500, detail="Invalid response format from external API")
+
+
 # Indic Extract Text Endpoint
 @app.post("/v1/indic-extract-text/",
           response_model=DocumentProcessResponse,

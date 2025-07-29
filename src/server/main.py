@@ -78,7 +78,15 @@ app = FastAPI(
 # Supported models
 SUPPORTED_MODELS = ["gemma3", "moondream", "qwen2.5vl", "qwen3", "sarvam-m", "deepseek-r1"]
 
-SUPPORTED_LANGUAGES = ["kan_Knda", "hin_Deva", "tam_Taml", "tel_Telu", "eng_Latn", "deu_Latn"]
+SUPPORTED_LANGUAGES = [
+        "eng_Latn", "hin_Deva", "kan_Knda", "tam_Taml", "mal_Mlym", "tel_Telu",
+        "asm_Beng", "kas_Arab" , "pan_Guru","ben_Beng" , "kas_Deva" , "san_Deva",
+        "brx_Deva", "mai_Deva" , "sat_Olck" , "doi_Deva", "mal_Mlym", "snd_Arab",
+        "mar_Deva" , "snd_Deva", "gom_Deva", "mni_Beng", "guj_Gujr", "mni_Mtei",
+        "npi_Deva", "urd_Arab", "ory_Orya",
+        "deu_Latn", "fra_Latn", "nld_Latn", "spa_Latn", "ita_Latn", "por_Latn",
+        "rus_Cyrl", "pol_Latn"
+    ]
 
 # Pydantic models (updated to include model validation)
 class VisualQueryRequest(BaseModel):
@@ -368,7 +376,7 @@ async def generate_audio(
     
 
         # Validate language
-    allowed_languages = ["kannada", "hindi", "tamil", "english","german" ]
+    allowed_languages = ["kannada", "hindi", "tamil", "english","german", "telugu", "marathi" ]
     if language not in allowed_languages:
         raise HTTPException(status_code=400, detail=f"Language must be one of {allowed_languages}")
     
@@ -418,7 +426,7 @@ async def generate_audio(
                 json=payload,
                 headers={"accept": "*/*", "Content-Type": "application/json"},
                 stream=True,
-                timeout=90
+                timeout=30
             )
             
             # Write audio content to the temporary file
@@ -504,7 +512,7 @@ async def chat_v2(
                 "accept": "application/json",
                 "Content-Type": "application/json"
             },
-            timeout=90
+            timeout=30
         )
         response.raise_for_status()
 
@@ -568,7 +576,7 @@ async def chat_direct(
                 "accept": "application/json",
                 "Content-Type": "application/json"
             },
-            timeout=90
+            timeout=30
         )
         response.raise_for_status()
 
@@ -604,7 +612,7 @@ async def transcribe_audio(
     language: str = Query(..., description="Language of the audio (kannada, hindi, tamil, english, german)")
 ):
     # Validate language
-    allowed_languages = ["kannada", "hindi", "tamil", "english","german" ]
+    allowed_languages = ["kannada", "hindi", "tamil", "english","german", "telugu" , "marathi" ]
     if language not in allowed_languages:
         raise HTTPException(status_code=400, detail=f"Language must be one of {allowed_languages}")
     
@@ -618,7 +626,7 @@ async def transcribe_audio(
                 'model': (None, 'Systran/faster-whisper-small')
         }
         
-        response = httpx.post('http://localhost:8000/v1/audio/transcriptions', files=files, timeout=90.0)
+        response = httpx.post('http://localhost:8000/v1/audio/transcriptions', files=files, timeout=30.0)
 
         if response.status_code == 200:
             transcription = response.json().get("text", "")
@@ -641,7 +649,7 @@ async def transcribe_audio(
                 external_url,
                 files=files,
                 headers={"accept": "application/json"},
-                timeout=90
+                timeout=30
             )
             response.raise_for_status()
             
@@ -675,12 +683,16 @@ async def translate(
         raise HTTPException(status_code=400, detail="Sentences cannot be empty")
     
     # Validate language codes
-    supported_languages = [
+    translate_supported_languages = [
         "eng_Latn", "hin_Deva", "kan_Knda", "tam_Taml", "mal_Mlym", "tel_Telu",
+        "asm_Beng", "kas_Arab" , "pan_Guru","ben_Beng" , "kas_Deva" , "san_Deva",
+        "brx_Deva", "mai_Deva" , "sat_Olck" , "doi_Deva", "mal_Mlym", "snd_Arab",
+        "mar_Deva" , "snd_Deva", "gom_Deva", "mni_Beng", "guj_Gujr", "mni_Mtei",
+        "npi_Deva", "urd_Arab", "ory_Orya",
         "deu_Latn", "fra_Latn", "nld_Latn", "spa_Latn", "ita_Latn", "por_Latn",
         "rus_Cyrl", "pol_Latn"
     ]
-    if request.src_lang not in supported_languages or request.tgt_lang not in supported_languages:
+    if request.src_lang not in translate_supported_languages or request.tgt_lang not in translate_supported_languages:
         raise HTTPException(status_code=400, detail=f"Unsupported language codes: src={request.src_lang}, tgt={request.tgt_lang}")
 
     logger.debug(f"Received translation request: {len(request.sentences)} sentences, src_lang: {request.src_lang}, tgt_lang: {request.tgt_lang}")
@@ -701,7 +713,7 @@ async def translate(
                 "accept": "application/json",
                 "Content-Type": "application/json"
             },
-            timeout=90
+            timeout=30
         )
         response.raise_for_status()
 
@@ -757,8 +769,16 @@ async def visual_query(
     if len(query) > 10000:
         raise HTTPException(status_code=400, detail="Query cannot exceed 10000 characters")
 
-    # Validate language codes
-    supported_languages = ["kan_Knda", "hin_Deva", "tam_Taml", "tel_Telu", "eng_Latn", "deu_Latn"]
+    supported_languages = [
+        "eng_Latn", "hin_Deva", "kan_Knda", "tam_Taml", "mal_Mlym", "tel_Telu",
+        "asm_Beng", "kas_Arab" , "pan_Guru","ben_Beng" , "kas_Deva" , "san_Deva",
+        "brx_Deva", "mai_Deva" , "sat_Olck" , "doi_Deva", "mal_Mlym", "snd_Arab",
+        "mar_Deva" , "snd_Deva", "gom_Deva", "mni_Beng", "guj_Gujr", "mni_Mtei",
+        "npi_Deva", "urd_Arab", "ory_Orya",
+        "deu_Latn", "fra_Latn", "nld_Latn", "spa_Latn", "ita_Latn", "por_Latn",
+        "rus_Cyrl", "pol_Latn"
+    ]
+
     if src_lang not in supported_languages:
         raise HTTPException(status_code=400, detail=f"Unsupported source language: {src_lang}. Must be one of {supported_languages}")
     if tgt_lang not in supported_languages:
@@ -797,7 +817,7 @@ async def visual_query(
             files=files,
             data=data,
             headers={"accept": "application/json"},
-            timeout=90
+            timeout=30
         )
         response.raise_for_status()
 
@@ -877,7 +897,7 @@ async def visual_query_direct(
             files=files,
             data=data,
             headers={"accept": "application/json"},
-            timeout=90
+            timeout=30
         )
         response.raise_for_status()
 
@@ -945,7 +965,7 @@ async def speech_to_speech(
             files=files,
             headers={"accept": "application/json"},
             stream=True,
-            timeout=90
+            timeout=30
         )
         response.raise_for_status()
 
@@ -1018,7 +1038,7 @@ async def extract_text(
             files=files,
             data=data,
             headers={"accept": "application/json"},
-            timeout=90
+            timeout=30
         )
         response.raise_for_status()
 
@@ -1083,7 +1103,7 @@ async def extract_text_all(
             files=files,
             data=data,
             headers={"accept": "application/json"},
-            timeout=90
+            timeout=30
 
         )
         response.raise_for_status()
@@ -1115,7 +1135,83 @@ async def extract_text_all(
     except ValueError as e:
         logger.error(f"Invalid JSON response from external API: {str(e)}")
         raise HTTPException(status_code=500, detail="Invalid response format from external API")
-    
+
+
+@app.post("/v1/extract-text-all-chunk",
+          response_model=PDFTextExtractionAllResponse,
+          summary="Extract Text from PDF",
+          description="Extract text from a specified page of a PDF file by calling an external API.",
+          tags=["PDF"],
+          responses={
+              200: {"description": "Extracted text", "model": PDFTextExtractionAllResponse},
+              400: {"description": "Invalid PDF or page number"},
+              500: {"description": "External API error"},
+              504: {"description": "External API timeout"}
+          })
+async def extract_text_all_chunk(
+    request: Request,
+    file: UploadFile = File(..., description="PDF file to extract text from"),
+    model: str = Query(default="gemma3", description="LLM model", enum=SUPPORTED_MODELS)
+):
+    if not file.filename.lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="Only PDF files supported")
+
+    validate_model(model)
+
+    logger.debug("Processing PDF text extraction", extra={
+        "endpoint": "/v1/extract-text-all-chunk",
+        "file_name": file.filename,
+        "model": model,
+        "client_ip": request.client.host
+    })
+
+    external_url = f"{os.getenv('DWANI_API_BASE_URL_PDF')}/extract-text-all-chunk/"
+    start_time = time.time()
+
+    try:
+        file_content = await file.read()
+        files = {"file": (file.filename, file_content, file.content_type)}
+        data = {"model": model}
+
+        response = requests.post(
+            external_url,
+            files=files,
+            data=data,
+            headers={"accept": "application/json"},
+            timeout=30
+
+        )
+        response.raise_for_status()
+
+        response_data = response.json()
+        
+        # Validate response using Pydantic model
+        try:
+            validated_response = PDFTextExtractionAllResponse(**response_data)
+            extracted_text = validated_response.page_contents
+        except Exception as e:
+            logger.warning(f"Failed to validate response with Pydantic model: {str(e)}")
+            # Fallback to directly accessing page_contents
+            extracted_text = response_data.get("page_contents", {})
+        
+        if not extracted_text:
+            logger.warning("No page_contents found in external API response")
+            extracted_text = {}
+
+        logger.debug(f"PDF text extraction completed in {time.time() - start_time:.2f} seconds")
+        return PDFTextExtractionAllResponse(page_contents=extracted_text)
+
+    except requests.Timeout:
+        logger.error("External PDF extraction API timed out")
+        raise HTTPException(status_code=504, detail="External API timeout")
+    except requests.RequestException as e:
+        logger.error(f"External PDF extraction API error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"External API error: {str(e)}")
+    except ValueError as e:
+        logger.error(f"Invalid JSON response from external API: {str(e)}")
+        raise HTTPException(status_code=500, detail="Invalid response format from external API")
+
+
 # Indic Extract Text Endpoint
 @app.post("/v1/indic-extract-text/",
           response_model=DocumentProcessResponse,
@@ -1175,7 +1271,7 @@ async def extract_and_translate(
             files=files,
             data=data,
             headers={"accept": "application/json"},
-            timeout=90
+            timeout=30
         )
         response.raise_for_status()
 
@@ -1251,7 +1347,7 @@ async def summarize_pdf(
             files=files,
             data=data,
             headers={"accept": "application/json"},
-            timeout=90
+            timeout=30
         )
         response.raise_for_status()
 
@@ -1341,7 +1437,7 @@ async def indic_summarize_pdf(
             files=files,
             data=data,
             headers={"accept": "application/json"},
-            timeout=90
+            timeout=30
         )
         response.raise_for_status()
 
@@ -1429,7 +1525,7 @@ async def indic_summarize_pdf_all(
             files=files,
             data=data,
             headers={"accept": "application/json"},
-            timeout=90
+            timeout=30
         )
         response.raise_for_status()
 
@@ -1515,7 +1611,7 @@ async def custom_prompt_pdf(
             files=files,
             data=data,
             headers={"accept": "application/json"},
-            timeout=90
+            timeout=30
         )
         response.raise_for_status()
 
@@ -1611,7 +1707,7 @@ async def indic_custom_prompt_pdf(
             files=files,
             data=data,
             headers={"accept": "application/json"},
-            timeout=90
+            timeout=30
         )
         response.raise_for_status()
 
@@ -1711,7 +1807,7 @@ async def indic_custom_prompt_pdf_all(
             files=files,
             data=data,
             headers={"accept": "application/json"},
-            timeout=90
+            timeout=30
         )
         response.raise_for_status()
 
@@ -1812,7 +1908,7 @@ async def indic_custom_prompt_kannada_pdf(
             data=data,
             headers={"accept": "application/json"},
             stream=True,
-            timeout=90
+            timeout=30
         )
         response.raise_for_status()
 

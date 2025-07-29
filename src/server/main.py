@@ -78,7 +78,15 @@ app = FastAPI(
 # Supported models
 SUPPORTED_MODELS = ["gemma3", "moondream", "qwen2.5vl", "qwen3", "sarvam-m", "deepseek-r1"]
 
-SUPPORTED_LANGUAGES = ["kan_Knda", "hin_Deva", "tam_Taml", "tel_Telu", "eng_Latn", "deu_Latn"]
+SUPPORTED_LANGUAGES = [
+        "eng_Latn", "hin_Deva", "kan_Knda", "tam_Taml", "mal_Mlym", "tel_Telu",
+        "asm_Beng", "kas_Arab" , "pan_Guru","ben_Beng" , "kas_Deva" , "san_Deva",
+        "brx_Deva", "mai_Deva" , "sat_Olck" , "doi_Deva", "mal_Mlym", "snd_Arab",
+        "mar_Deva" , "snd_Deva", "gom_Deva", "mni_Beng", "guj_Gujr", "mni_Mtei",
+        "npi_Deva", "urd_Arab", "ory_Orya",
+        "deu_Latn", "fra_Latn", "nld_Latn", "spa_Latn", "ita_Latn", "por_Latn",
+        "rus_Cyrl", "pol_Latn"
+    ]
 
 # Pydantic models (updated to include model validation)
 class VisualQueryRequest(BaseModel):

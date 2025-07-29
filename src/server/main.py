@@ -675,12 +675,16 @@ async def translate(
         raise HTTPException(status_code=400, detail="Sentences cannot be empty")
     
     # Validate language codes
-    supported_languages = [
+    translate_supported_languages = [
         "eng_Latn", "hin_Deva", "kan_Knda", "tam_Taml", "mal_Mlym", "tel_Telu",
+        "asm_Beng", "kas_Arab" , "pan_Guru","ben_Beng" , "kas_Deva" , "san_Deva",
+        "brx_Deva", "mai_Deva" , "sat_Olck" , "doi_Deva", "mal_Mlym", "snd_Arab",
+        "mar_Deva" , "snd_Deva", "gom_Deva", "mni_Beng", "guj_Gujr", "mni_Mtei",
+        "npi_Deva", "urd_Arab", "ory_Orya",
         "deu_Latn", "fra_Latn", "nld_Latn", "spa_Latn", "ita_Latn", "por_Latn",
         "rus_Cyrl", "pol_Latn"
     ]
-    if request.src_lang not in supported_languages or request.tgt_lang not in supported_languages:
+    if request.src_lang not in translate_supported_languages or request.tgt_lang not in translate_supported_languages:
         raise HTTPException(status_code=400, detail=f"Unsupported language codes: src={request.src_lang}, tgt={request.tgt_lang}")
 
     logger.debug(f"Received translation request: {len(request.sentences)} sentences, src_lang: {request.src_lang}, tgt_lang: {request.tgt_lang}")

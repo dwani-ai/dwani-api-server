@@ -906,7 +906,7 @@ async def ocr_query(
         response.raise_for_status()
 
         response_data = response.json()
-        answer = response_data.get("response", "")
+        answer = response_data.get("extracted_text", "")
 
         if not answer:
             logger.warning(f"Empty or missing 'response' field in external API response: {response_data}")

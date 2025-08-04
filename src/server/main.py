@@ -105,6 +105,14 @@ class VisualQueryRequest(BaseModel):
             }
         }
 
+class OCRRequest(BaseModel):
+    model: str = Field(default="gemma3", description="LLM model", enum=SUPPORTED_MODELS)
+    class Config:
+        schema_extra = {
+            "example": {
+                "model": "moondream"
+            }
+        }
 
 class VisualQueryDirectRequest(BaseModel):
     query: str = Field(..., description="Text query", max_length=1000)
@@ -119,6 +127,12 @@ class VisualQueryDirectRequest(BaseModel):
         }
 
 class VisualQueryResponse(BaseModel):
+    answer: str
+
+    class Config:
+        schema_extra = {"example": {"answer": "The image shows a screenshot of a webpage."}}
+
+class OCRResponse(BaseModel):
     answer: str
 
     class Config:
@@ -841,6 +855,75 @@ async def visual_query(
         logger.error(f"Invalid JSON response: {str(e)}")
         raise HTTPException(status_code=500, detail="Invalid response format from visual query service")
 
+
+
+# Visual Query Endpoint
+@app.post("/v1/ocr",
+          response_model=OCRResponse,
+          summary="OCR with Image",
+          description="Process a Image as OCR",
+          tags=["Chat"],
+          responses={
+              200: {"description": "Query response", "model": OCRResponse},
+              400: {"description": "Invalid query, image"},
+              422: {"description": "Validation error in request body"},
+              504: {"description": "Visual query service timeout"}
+          })
+async def ocr_query(
+    request: Request,
+    file: UploadFile = File(..., description="Image file to analyze (PNG only)"),
+    model: str = Query(default="gemma3", description="LLM model", enum=SUPPORTED_MODELS)
+):
+    # Validate model
+    validate_model(model)
+
+    logger.debug("Processing visual query direct request", extra={
+        "endpoint": "/v1/ocr",
+        "file_name": file.filename,
+        "client_ip": request.client.host,
+        "model": model
+    })
+
+    external_url = f"{os.getenv('DWANI_API_BASE_URL_VISION')}/ocr/"
+
+    try:
+        file_content = await file.read()
+        if not file.content_type.startswith("image/png"):
+            raise HTTPException(status_code=400, detail="Only PNG images supported")
+
+        files = {"file": (file.filename, file_content, file.content_type)}
+        data = {
+            "model": model
+        }
+
+        response = requests.post(
+            external_url,
+            files=files,
+            data=data,
+            headers={"accept": "application/json"},
+            timeout=30
+        )
+        response.raise_for_status()
+
+        response_data = response.json()
+        answer = response_data.get("response", "")
+
+        if not answer:
+            logger.warning(f"Empty or missing 'response' field in external API response: {response_data}")
+            raise HTTPException(status_code=500, detail="No valid response provided by visual query direct service")
+
+        logger.debug(f"Visual query direct successful: {answer}")
+        return OCRResponse(answer=answer)
+
+    except requests.Timeout:
+        logger.error("Visual query direct request timed out")
+        raise HTTPException(status_code=504, detail="Visual query direct service timeout")
+    except requests.RequestException as e:
+        logger.error(f"Error during visual query: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Visual query direct failed: {str(e)}")
+    except ValueError as e:
+        logger.error(f"Invalid JSON response: {str(e)}")
+        raise HTTPException(status_code=500, detail="Invalid response format from visual query direct service")
 
 
 # Visual Query Endpoint

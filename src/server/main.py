@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field
 import requests
 from typing import List, Optional, Dict, Any
 
-
+import json
 from time import time
 from typing import Optional
 # Assuming these are in your project structure
@@ -880,9 +880,17 @@ async def visual_query_direct(
 
     try:
         response = await indic_visual_query_direct(file=file, prompt=query, model=model)
+        # If response is a JSONResponse, extract and parse its body
+        if isinstance(response, JSONResponse):
+            response_body = json.loads(response.body.decode("utf-8"))
+            answer = response_body.get("response", "")
+        else:
+            # If response is already a dict, access it directly
+            answer = response.get("response", "")
 
-        print(response)
-        answer = response.get("response", "")
+        # Continue with your logic
+#        return {"answer": answer}
+
 
         if not answer:
             logger.warning(f"Empty or missing 'response' field in external API response: {response_data}")

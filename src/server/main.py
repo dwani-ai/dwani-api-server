@@ -881,6 +881,7 @@ async def visual_query_direct(
     try:
         response = await indic_visual_query_direct(file=file, prompt=query, model=model)
 
+        print(response)
         answer = response.get("response", "")
 
         if not answer:

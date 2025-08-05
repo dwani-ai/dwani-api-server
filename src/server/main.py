@@ -868,27 +868,8 @@ async def ocr_query(
         "model": model
     })
 
-    external_url = f"{os.getenv('DWANI_API_BASE_URL_VISION')}/ocr/"
-
     try:
-        file_content = await file.read()
-        if not file.content_type.startswith("image/png"):
-            raise HTTPException(status_code=400, detail="Only PNG images supported")
-
-        files = {"file": (file.filename, file_content, file.content_type)}
-        data = {
-            "model": model
-        }
-
-        response = requests.post(
-            external_url,
-            files=files,
-            data=data,
-            headers={"accept": "application/json"},
-            timeout=30
-        )
-        response.raise_for_status()
-
+        response = ocr_image(file=file)
         response_data = response.json()
         answer = response_data.get("extracted_text", "")
 
@@ -2186,7 +2167,74 @@ async def chat_completions(request: ChatCompletionRequest, fastapi_request: Requ
 async def health():
     return {"status": "healthy"}
 
+from io import BytesIO
+from openai import OpenAI
+import base64
 
+# Dynamic LLM client based on model
+def get_openai_client(model: str) -> OpenAI:
+    """Initialize OpenAI client with model-specific base URL."""
+    valid_models = ["gemma3", "moondream", "qwen2.5vl", "qwen3", "sarvam-m", "deepseek-r1"]
+    if model not in valid_models:
+        raise ValueError(f"Invalid model: {model}. Choose from: {', '.join(valid_models)}")
+    
+    model_ports = {
+        "qwen3": "9100",
+        "gemma3": "9000",
+        "moondream": "7882",
+        "qwen2.5vl": "7883",
+        "sarvam-m": "7884",
+        "deepseek-r1": "7885"
+    }
+    base_url = f"http://0.0.0.0:{model_ports[model]}/v1"
+
+    return OpenAI(api_key="http", base_url=base_url)
+
+
+def encode_image(image: BytesIO) -> str:
+    """Encode image bytes to base64 string."""
+    return base64.b64encode(image.read()).decode("utf-8")
+
+def ocr_page_with_rolm(img_base64: str, model: str) -> str:
+    """Perform OCR on the provided base64 image using the specified model."""
+    try:
+        client = get_openai_client(model)
+        response = client.chat.completions.create(
+            model=model,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": f"data:image/png;base64,{img_base64}"}
+                        },
+                        {"type": "text", "text": "Return the plain text extracted from this image."}
+                    ]
+                }
+            ],
+            temperature=0.2,
+            max_tokens=4096
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"OCR processing failed: {str(e)}")
+
+
+
+@app.post("/ocr")
+async def ocr_image(file: UploadFile = File(...)):
+    if not file.content_type.startswith("image/png"):
+        raise HTTPException(status_code=400, detail="Only PNG images supported")
+
+    try:
+        image_bytes = await file.read()
+        image = BytesIO(image_bytes)
+        img_base64 = encode_image(image)
+        text = ocr_page_with_rolm(img_base64, model="gemma3")
+        return {"extracted_text": text}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error processing image: {str(e)}")
 
 
 if __name__ == "__main__":

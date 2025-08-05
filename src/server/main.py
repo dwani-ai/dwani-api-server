@@ -2202,9 +2202,8 @@ async def ocr_query(
 
     try:
         response = await ocr_image(file=file)
-        print(response)
-        response_data = response.json()
-        answer = response_data.get("extracted_text", "")
+        
+        answer = response.get("extracted_text", "")
 
         if not answer:
             logger.warning(f"Empty or missing 'response' field in external API response: {response_data}")

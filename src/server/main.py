@@ -841,56 +841,6 @@ async def visual_query(
 
 
 
-# Visual Query Endpoint
-@app.post("/v1/ocr",
-          response_model=OCRResponse,
-          summary="OCR with Image",
-          description="Process a Image as OCR",
-          tags=["Chat"],
-          responses={
-              200: {"description": "Query response", "model": OCRResponse},
-              400: {"description": "Invalid query, image"},
-              422: {"description": "Validation error in request body"},
-              504: {"description": "Visual query service timeout"}
-          })
-async def ocr_query(
-    request: Request,
-    file: UploadFile = File(..., description="Image file to analyze (PNG only)"),
-    model: str = Query(default="gemma3", description="LLM model", enum=SUPPORTED_MODELS)
-):
-    # Validate model
-    validate_model(model)
-
-    logger.debug("Processing visual query direct request", extra={
-        "endpoint": "/v1/ocr",
-        "file_name": file.filename,
-        "client_ip": request.client.host,
-        "model": model
-    })
-
-    try:
-        response = ocr_image(file=file)
-        print(response)
-        response_data = response.json()
-        answer = response_data.get("extracted_text", "")
-
-        if not answer:
-            logger.warning(f"Empty or missing 'response' field in external API response: {response_data}")
-            raise HTTPException(status_code=500, detail="No valid response provided by visual query direct service")
-
-        logger.debug(f"Visual query direct successful: {answer}")
-        return OCRResponse(answer=answer)
-
-    except requests.Timeout:
-        logger.error("Visual query direct request timed out")
-        raise HTTPException(status_code=504, detail="Visual query direct service timeout")
-    except requests.RequestException as e:
-        logger.error(f"Error during visual query: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Visual query direct failed: {str(e)}")
-    except ValueError as e:
-        logger.error(f"Invalid JSON response: {str(e)}")
-        raise HTTPException(status_code=500, detail="Invalid response format from visual query direct service")
-
 
 # Visual Query Endpoint
 @app.post("/v1/visual_query_direct",
@@ -2221,6 +2171,57 @@ def ocr_page_with_rolm(img_base64: str, model: str) -> str:
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"OCR processing failed: {str(e)}")
 
+
+
+# Visual Query Endpoint
+@app.post("/v1/ocr",
+          response_model=OCRResponse,
+          summary="OCR with Image",
+          description="Process a Image as OCR",
+          tags=["Chat"],
+          responses={
+              200: {"description": "Query response", "model": OCRResponse},
+              400: {"description": "Invalid query, image"},
+              422: {"description": "Validation error in request body"},
+              504: {"description": "Visual query service timeout"}
+          })
+async def ocr_query(
+    request: Request,
+    file: UploadFile = File(..., description="Image file to analyze (PNG only)"),
+    model: str = Query(default="gemma3", description="LLM model", enum=SUPPORTED_MODELS)
+):
+    # Validate model
+    validate_model(model)
+
+    logger.debug("Processing visual query direct request", extra={
+        "endpoint": "/v1/ocr",
+        "file_name": file.filename,
+        "client_ip": request.client.host,
+        "model": model
+    })
+
+    try:
+        response = await ocr_image(file=file)
+        print(response)
+        response_data = response.json()
+        answer = response_data.get("extracted_text", "")
+
+        if not answer:
+            logger.warning(f"Empty or missing 'response' field in external API response: {response_data}")
+            raise HTTPException(status_code=500, detail="No valid response provided by visual query direct service")
+
+        logger.debug(f"Visual query direct successful: {answer}")
+        return OCRResponse(answer=answer)
+
+    except requests.Timeout:
+        logger.error("Visual query direct request timed out")
+        raise HTTPException(status_code=504, detail="Visual query direct service timeout")
+    except requests.RequestException as e:
+        logger.error(f"Error during visual query: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Visual query direct failed: {str(e)}")
+    except ValueError as e:
+        logger.error(f"Invalid JSON response: {str(e)}")
+        raise HTTPException(status_code=500, detail="Invalid response format from visual query direct service")
 
 
 @app.post("/ocr")

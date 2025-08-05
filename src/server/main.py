@@ -2161,6 +2161,31 @@ def ocr_page_with_rolm(img_base64: str, model: str) -> str:
         raise HTTPException(status_code=500, detail=f"OCR processing failed: {str(e)}")
 
 
+def ocr_page_with_rolm_query(img_base64: str, query:str,  model: str) -> str:
+    """Perform OCR on the provided base64 image using the specified model."""
+    try:
+        client = get_openai_client(model)
+        response = client.chat.completions.create(
+            model=model,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": f"data:image/png;base64,{img_base64}"}
+                        },
+                        {"type": "text", "text": query}
+                    ]
+                }
+            ],
+            temperature=0.2,
+            max_tokens=4096
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"OCR processing failed: {str(e)}")
+
 
 # Visual Query Endpoint
 @app.post("/v1/ocr",
@@ -2195,7 +2220,7 @@ async def ocr_query(
         answer = response.get("extracted_text", "")
 
         if not answer:
-            logger.warning(f"Empty or missing 'response' field in external API response: {response_data}")
+            logger.warning(f"Empty or missing 'response' field in external API response: {answer}")
             raise HTTPException(status_code=500, detail="No valid response provided by visual query direct service")
 
         logger.debug(f"Visual query direct successful: {answer}")
@@ -2238,33 +2263,14 @@ async def indic_visual_query_direct(
         if not file.content_type.startswith("image/png"):
             raise HTTPException(status_code=400, detail="Only PNG images supported")
 
-        logger.info(f"Processing indic visual query: model={model}, prompt={prompt[:50] if prompt else None}")
+        logger.debug(f"Processing indic visual query: model={model}, prompt={prompt[:50] if prompt else None}")
 
         image_bytes = await file.read()
         image = BytesIO(image_bytes)
         img_base64 = encode_image(image)
-        extracted_text = ocr_page_with_rolm(img_base64, model)
+        extracted_text = ocr_page_with_rolm_query(img_base64,prompt, model)
 
-        response = None
-
-        if prompt and prompt.strip():
-            client = get_openai_client(model)
-            custom_response = client.chat.completions.create(
-                model=model,
-                messages=[
-                    {
-                        "role": "system",
-                        "content": [{"type": "text", "text": "You are dwani, a helpful assistant. Summarize your answer in maximum 1 sentence. If the answer contains numerical digits, convert the digits into words"}]
-                    },
-                    {"role": "user", "content": f"{prompt}\n\n{extracted_text}"}
-                ],
-                temperature=0.3,
-                max_tokens=500
-            )
-            response = custom_response.choices[0].message.content
-            
-        elif prompt and not prompt.strip():
-            raise HTTPException(status_code=400, detail="Prompt cannot be empty.")
+        response = extracted_text
 
         result = {
             "extracted_text": extracted_text,
@@ -2273,7 +2279,7 @@ async def indic_visual_query_direct(
         if response:
             result["response"] = response
 
-        logger.info(f"visual query direct successful: extracted_text_length={len(extracted_text)}")
+        logger.debug(f"visual query direct successful: extracted_text_length={len(extracted_text)}")
         return JSONResponse(content=result)
 
     except requests.exceptions.RequestException as e:

@@ -2268,6 +2268,153 @@ async def indic_visual_query_direct(
 
 
 
+from fastapi import FastAPI, APIRouter, HTTPException
+from fastapi.responses import JSONResponse
+import httpx
+from typing import Dict, Any
+from pydantic import BaseModel
+from starlette.requests import Request
+from starlette.responses import Response
+
+router = APIRouter()
+# Placeholder backend service URL (replace with actual URL)
+BACKEND_SERVICE_URL = "http://localhost:9000"
+
+# Helper function to forward requests
+async def forward_request(request: Request, target_url: str) -> Response:
+    async with httpx.AsyncClient() as client:
+        try:
+            # Forward the request with the same method, headers, and body
+            response = await client.request(
+                method=request.method,
+                url=target_url,
+                headers=request.headers,
+                content=await request.body(),
+                params=request.query_params
+            )
+            # Return the response from the backend
+            return JSONResponse(
+                content=response.json(),
+                status_code=response.status_code,
+                headers=dict(response.headers)
+            )
+        except httpx.RequestError as e:
+            raise HTTPException(status_code=500, detail=f"Error forwarding request: {str(e)}")
+
+# Define routes based on the provided log
+@router.get("/health")
+async def health(request: Request):
+    return await forward_request(request, f"{BACKEND_SERVICE_URL}/health")
+
+@router.get("/load")
+async def load(request: Request):
+    return await forward_request(request, f"{BACKEND_SERVICE_URL}/load")
+
+@router.get("/ping")
+@router.post("/ping")
+async def ping(request: Request):
+    return await forward_request(request, f"{BACKEND_SERVICE_URL}/ping")
+
+@router.post("/tokenize")
+async def tokenize(request: Request):
+    return await forward_request(request, f"{BACKEND_SERVICE_URL}/tokenize")
+
+@router.post("/detokenize")
+async def detokenize(request: Request):
+    return await forward_request(request, f"{BACKEND_SERVICE_URL}/detokenize")
+
+@router.get("/v1/models")
+async def models(request: Request):
+    return await forward_request(request, f"{BACKEND_SERVICE_URL}/v1/models")
+
+@router.get("/version")
+async def version(request: Request):
+    return await forward_request(request, f"{BACKEND_SERVICE_URL}/version")
+
+@router.post("/v1/responses")
+async def responses(request: Request):
+    return await forward_request(request, f"{BACKEND_SERVICE_URL}/v1/responses")
+
+@router.get("/v1/responses/{response_id}")
+async def get_response(response_id: str, request: Request):
+    return await forward_request(request, f"{BACKEND_SERVICE_URL}/v1/responses/{response_id}")
+
+@router.post("/v1/responses/{response_id}/cancel")
+async def cancel_response(response_id: str, request: Request):
+    return await forward_request(request, f"{BACKEND_SERVICE_URL}/v1/responses/{response_id}/cancel")
+
+@router.post("/v1/chat/completions")
+async def chat_completions(request: Request):
+    return await forward_request(request, f"{BACKEND_SERVICE_URL}/v1/chat/completions")
+
+@router.post("/v1/completions")
+async def completions(request: Request):
+    return await forward_request(request, f"{BACKEND_SERVICE_URL}/v1/completions")
+
+@router.post("/v1/embeddings")
+async def embeddings(request: Request):
+    return await forward_request(request, f"{BACKEND_SERVICE_URL}/v1/embeddings")
+
+@router.post("/pooling")
+async def pooling(request: Request):
+    return await forward_request(request, f"{BACKEND_SERVICE_URL}/pooling")
+
+@router.post("/classify")
+async def classify(request: Request):
+    return await forward_request(request, f"{BACKEND_SERVICE_URL}/classify")
+
+@router.post("/score")
+async def score(request: Request):
+    return await forward_request(request, f"{BACKEND_SERVICE_URL}/score")
+
+@router.post("/v1/score")
+async def v1_score(request: Request):
+    return await forward_request(request, f"{BACKEND_SERVICE_URL}/v1/score")
+
+@router.post("/v1/audio/transcriptions")
+async def audio_transcriptions(request: Request):
+    return await forward_request(request, f"{BACKEND_SERVICE_URL}/v1/audio/transcriptions")
+
+@router.post("/v1/audio/translations")
+async def audio_translations(request: Request):
+    return await forward_request(request, f"{BACKEND_SERVICE_URL}/v1/audio/translations")
+
+@router.post("/rerank")
+async def rerank(request: Request):
+    return await forward_request(request, f"{BACKEND_SERVICE_URL}/rerank")
+
+@router.post("/v1/rerank")
+async def v1_rerank(request: Request):
+    return await forward_request(request, f"{BACKEND_SERVICE_URL}/v1/rerank")
+
+@router.post("/v2/rerank")
+async def v2_rerank(request: Request):
+    return await forward_request(request, f"{BACKEND_SERVICE_URL}/v2/rerank")
+
+@router.post("/scale_elastic_ep")
+async def scale_elastic_ep(request: Request):
+    return await forward_request(request, f"{BACKEND_SERVICE_URL}/scale_elastic_ep")
+
+@router.post("/is_scaling_elastic_ep")
+async def is_scaling_elastic_ep(request: Request):
+    return await forward_request(request, f"{BACKEND_SERVICE_URL}/is_scaling_elastic_ep")
+
+@router.post("/invocations")
+async def invocations(request: Request):
+    return await forward_request(request, f"{BACKEND_SERVICE_URL}/invocations")
+
+@router.get("/metrics")
+async def metrics(request: Request):
+    return await forward_request(request, f"{BACKEND_SERVICE_URL}/metrics")
+
+# Include standard FastAPI routes (no forwarding needed for these)
+# /openapi.json, /docs, /docs/oauth2-redirect, /redoc are provided by FastAPI automatically
+
+# Include the router in the FastAPI app
+app.include_router(router)
+
+
+
 if __name__ == "__main__":
     # Ensure EXTERNAL_API_BASE_URL is set
     external_api_base_url_pdf = os.getenv("DWANI_API_BASE_URL_PDF")

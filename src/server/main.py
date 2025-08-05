@@ -2222,7 +2222,6 @@ async def ocr_image(file: UploadFile = File(...)):
 from fastapi.responses import JSONResponse, FileResponse
 
 async def indic_visual_query_direct(
-    request: Request,
     file: UploadFile = File(..., description="PNG image file to analyze"),
     prompt: Optional[str] = Form(None, description="Optional custom prompt to process the extracted text"),
     model: str = Form("gemma3", description="LLM model", enum=["gemma3", "moondream", "smolvla"])

@@ -881,8 +881,7 @@ async def visual_query_direct(
     try:
         response = await indic_visual_query_direct(file=file, prompt=query, model=model)
 
-        response_data = response.json()
-        answer = response_data.get("response", "")
+        answer = response.get("response", "")
 
         if not answer:
             logger.warning(f"Empty or missing 'response' field in external API response: {response_data}")

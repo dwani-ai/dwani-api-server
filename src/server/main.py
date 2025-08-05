@@ -2135,31 +2135,8 @@ def encode_image(image: BytesIO) -> str:
     """Encode image bytes to base64 string."""
     return base64.b64encode(image.read()).decode("utf-8")
 
-def ocr_page_with_rolm(img_base64: str, model: str) -> str:
-    """Perform OCR on the provided base64 image using the specified model."""
-    try:
-        client = get_openai_client(model)
-        response = client.chat.completions.create(
-            model=model,
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "image_url",
-                            "image_url": {"url": f"data:image/png;base64,{img_base64}"}
-                        },
-                        {"type": "text", "text": "Return the plain text extracted from this image."}
-                    ]
-                }
-            ],
-            temperature=0.2,
-            max_tokens=4096
-        )
-        return response.choices[0].message.content
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"OCR processing failed: {str(e)}")
 
+ocr_query_string = "Return the plain text extracted from this image."
 
 def ocr_page_with_rolm_query(img_base64: str, query:str,  model: str) -> str:
     """Perform OCR on the provided base64 image using the specified model."""
@@ -2246,7 +2223,7 @@ async def ocr_image(file: UploadFile = File(...)):
         image_bytes = await file.read()
         image = BytesIO(image_bytes)
         img_base64 = encode_image(image)
-        text = ocr_page_with_rolm(img_base64, model="gemma3")
+        text = ocr_page_with_rolm_query(img_base64, ocr_query_string ,  model="gemma3")
         return {"extracted_text": text}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error processing image: {str(e)}")

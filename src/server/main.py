@@ -870,6 +870,7 @@ async def ocr_query(
 
     try:
         response = ocr_image(file=file)
+        print(response)
         response_data = response.json()
         answer = response_data.get("extracted_text", "")
 

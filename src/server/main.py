@@ -2232,7 +2232,7 @@ async def ocr_image(file: UploadFile = File(...)):
         image_bytes = await file.read()
         image = BytesIO(image_bytes)
         img_base64 = encode_image(image)
-        text = ocr_page_with_rolm(img_base64, model="gemma3")
+        text = await ocr_page_with_rolm(img_base64, model="gemma3")
         return {"extracted_text": text}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error processing image: {str(e)}")

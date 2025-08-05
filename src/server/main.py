@@ -697,16 +697,8 @@ async def translate(
         raise HTTPException(status_code=400, detail="Sentences cannot be empty")
     
     # Validate language codes
-    translate_supported_languages = [
-        "eng_Latn", "hin_Deva", "kan_Knda", "tam_Taml", "mal_Mlym", "tel_Telu",
-        "asm_Beng", "kas_Arab" , "pan_Guru","ben_Beng" , "kas_Deva" , "san_Deva",
-        "brx_Deva", "mai_Deva" , "sat_Olck" , "doi_Deva", "mal_Mlym", "snd_Arab",
-        "mar_Deva" , "snd_Deva", "gom_Deva", "mni_Beng", "guj_Gujr", "mni_Mtei",
-        "npi_Deva", "urd_Arab", "ory_Orya",
-        "deu_Latn", "fra_Latn", "nld_Latn", "spa_Latn", "ita_Latn", "por_Latn",
-        "rus_Cyrl", "pol_Latn"
-    ]
-    if request.src_lang not in translate_supported_languages or request.tgt_lang not in translate_supported_languages:
+
+    if request.src_lang not in SUPPORTED_LANGUAGES or request.tgt_lang not in SUPPORTED_LANGUAGES:
         raise HTTPException(status_code=400, detail=f"Unsupported language codes: src={request.src_lang}, tgt={request.tgt_lang}")
 
     logger.debug(f"Received translation request: {len(request.sentences)} sentences, src_lang: {request.src_lang}, tgt_lang: {request.tgt_lang}")
@@ -783,20 +775,12 @@ async def visual_query(
     if len(query) > 10000:
         raise HTTPException(status_code=400, detail="Query cannot exceed 10000 characters")
 
-    supported_languages = [
-        "eng_Latn", "hin_Deva", "kan_Knda", "tam_Taml", "mal_Mlym", "tel_Telu",
-        "asm_Beng", "kas_Arab" , "pan_Guru","ben_Beng" , "kas_Deva" , "san_Deva",
-        "brx_Deva", "mai_Deva" , "sat_Olck" , "doi_Deva", "mal_Mlym", "snd_Arab",
-        "mar_Deva" , "snd_Deva", "gom_Deva", "mni_Beng", "guj_Gujr", "mni_Mtei",
-        "npi_Deva", "urd_Arab", "ory_Orya",
-        "deu_Latn", "fra_Latn", "nld_Latn", "spa_Latn", "ita_Latn", "por_Latn",
-        "rus_Cyrl", "pol_Latn"
-    ]
+    
 
-    if src_lang not in supported_languages:
-        raise HTTPException(status_code=400, detail=f"Unsupported source language: {src_lang}. Must be one of {supported_languages}")
-    if tgt_lang not in supported_languages:
-        raise HTTPException(status_code=400, detail=f"Unsupported target language: {tgt_lang}. Must be one of {supported_languages}")
+    if src_lang not in SUPPORTED_LANGUAGES:
+        raise HTTPException(status_code=400, detail=f"Unsupported source language: {src_lang}. Must be one of {SUPPORTED_LANGUAGES}")
+    if tgt_lang not in SUPPORTED_LANGUAGES:
+        raise HTTPException(status_code=400, detail=f"Unsupported target language: {tgt_lang}. Must be one of {SUPPORTED_LANGUAGES}")
 
     # Validate model
     validate_model(model)
@@ -1320,8 +1304,7 @@ async def extract_and_translate(
     if page_number < 1:
         raise HTTPException(status_code=400, detail="Page number must be at least 1")
 
-    supported_languages = ["kan_Knda", "hin_Deva", "tam_Taml", "tel_Telu", "eng_Latn"]
-    if src_lang not in supported_languages or tgt_lang not in supported_languages:
+    if src_lang not in SUPPORTED_LANGUAGES or tgt_lang not in SUPPORTED_LANGUAGES:
         raise HTTPException(status_code=400, detail=f"Invalid language codes: src={src_lang}, tgt={tgt_lang}")
 
     validate_model(model)
@@ -1955,10 +1938,9 @@ async def indic_custom_prompt_kannada_pdf(
     if not prompt.strip():
         raise HTTPException(status_code=400, detail="Prompt cannot be empty")
 
-    # Validate source language
-    supported_languages = ["eng_Latn", "hin_Deva", "kan_Knda", "tam_Taml", "mal_Mlym", "tel_Telu"]
-    if src_lang not in supported_languages:
-        raise HTTPException(status_code=400, detail=f"Unsupported source language: {src_lang}. Must be one of {supported_languages}")
+
+    if src_lang not in SUPPORTED_LANGUAGES:
+        raise HTTPException(status_code=400, detail=f"Unsupported source language: {src_lang}. Must be one of {SUPPORTED_LANGUAGES}")
 
     logger.debug("Processing Kannada PDF generation request", extra={
         "endpoint": "/v1/indic-custom-prompt-kannada-pdf",

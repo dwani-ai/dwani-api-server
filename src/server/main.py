@@ -878,27 +878,8 @@ async def visual_query_direct(
         "model": model
     })
 
-    external_url = f"{os.getenv('DWANI_API_BASE_URL_VISION')}/visual-query-direct/"
-
     try:
-        file_content = await file.read()
-        if not file.content_type.startswith("image/png"):
-            raise HTTPException(status_code=400, detail="Only PNG images supported")
-
-        files = {"file": (file.filename, file_content, file.content_type)}
-        data = {
-            "prompt": query,
-            "model": model
-        }
-
-        response = requests.post(
-            external_url,
-            files=files,
-            data=data,
-            headers={"accept": "application/json"},
-            timeout=30
-        )
-        response.raise_for_status()
+        response = await indic_visual_query_direct(file=file, prompt=query, model=model)
 
         response_data = response.json()
         answer = response_data.get("response", "")
@@ -2236,6 +2217,65 @@ async def ocr_image(file: UploadFile = File(...)):
         return {"extracted_text": text}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error processing image: {str(e)}")
+
+
+from fastapi.responses import JSONResponse, FileResponse
+
+async def indic_visual_query_direct(
+    request: Request,
+    file: UploadFile = File(..., description="PNG image file to analyze"),
+    prompt: Optional[str] = Form(None, description="Optional custom prompt to process the extracted text"),
+    model: str = Form("gemma3", description="LLM model", enum=["gemma3", "moondream", "smolvla"])
+):
+    try:
+        if not file.content_type.startswith("image/png"):
+            raise HTTPException(status_code=400, detail="Only PNG images supported")
+
+        logger.info(f"Processing indic visual query: model={model}, prompt={prompt[:50] if prompt else None}")
+
+        image_bytes = await file.read()
+        image = BytesIO(image_bytes)
+        img_base64 = encode_image(image)
+        extracted_text = ocr_page_with_rolm(img_base64, model)
+
+        response = None
+
+        if prompt and prompt.strip():
+            client = get_openai_client(model)
+            custom_response = client.chat.completions.create(
+                model=model,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": [{"type": "text", "text": "You are dwani, a helpful assistant. Summarize your answer in maximum 1 sentence. If the answer contains numerical digits, convert the digits into words"}]
+                    },
+                    {"role": "user", "content": f"{prompt}\n\n{extracted_text}"}
+                ],
+                temperature=0.3,
+                max_tokens=500
+            )
+            response = custom_response.choices[0].message.content
+            
+        elif prompt and not prompt.strip():
+            raise HTTPException(status_code=400, detail="Prompt cannot be empty.")
+
+        result = {
+            "extracted_text": extracted_text,
+            "response": response
+        }
+        if response:
+            result["response"] = response
+
+        logger.info(f"visual query direct successful: extracted_text_length={len(extracted_text)}")
+        return JSONResponse(content=result)
+
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Error translating: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error translating: {str(e)}")
+    except Exception as e:
+        logger.error(f"Error processing request: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
+
 
 
 if __name__ == "__main__":

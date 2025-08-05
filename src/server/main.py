@@ -2051,62 +2051,6 @@ class ProxyFeatures:
 
 from pydantic import BaseModel, ValidationError
 
-# Chat completions endpoint
-@app.post("/v1/chat/completions", response_model=ChatCompletionResponse)
-async def chat_completions(request: ChatCompletionRequest, fastapi_request: Request):
-    """Proxy chat completion requests to vLLM with custom features."""
-    start_time = time.time()
-    client_ip = fastapi_request.client.host
-
-    # Log request
-    ProxyFeatures.log_request(request.dict(), client_ip)
-
-    # Rate limiting
-    if not ProxyFeatures.rate_limit(client_ip):
-        raise HTTPException(status_code=429, detail="Rate limit exceeded")
-
-    # Forward request to vLLM
-    if request.stream:
-        raise HTTPException(status_code=501, detail="Streaming not supported yet")
-
-    try:
-        response = requests.post(
-            f"{VLLM_API_BASE}/chat/completions",
-            json=request.dict(),
-            headers=headers,
-            timeout=30
-        )
-        response.raise_for_status()
-        vllm_response = response.json()
-
-        # Log raw response for debugging
-        logger.debug(f"vLLM raw response: {vllm_response}")
-
-        # Estimate usage if missing
-        vllm_response = ProxyFeatures.estimate_usage(request.dict(), vllm_response)
-
-        # Modify response
-        modified_response = ProxyFeatures.modify_response(vllm_response)
-
-        # Log response
-        processing_time = time.time() - start_time
-        ProxyFeatures.log_response(modified_response, processing_time)
-
-        # Validate and return response
-        return ChatCompletionResponse(**modified_response)
-
-    except requests.RequestException as e:
-        logger.error(f"vLLM server error: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"vLLM error: {str(e)}")
-    except ValidationError as e:
-        logger.error(f"Response validation error: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Response validation error: {str(e)}")
-
-# Health check endpoint
-@app.get("/health")
-async def health():
-    return {"status": "healthy"}
-
 from io import BytesIO
 from openai import OpenAI
 import base64

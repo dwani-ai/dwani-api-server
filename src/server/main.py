@@ -566,7 +566,7 @@ async def chat_direct(
         raise HTTPException(status_code=400, detail="Prompt cannot exceed 10000 characters")
 
     # Validate model parameter
-    valid_models = ["gemma3", "moondream", "qwen2.5vl", "qwen3", "sarvam-m", "deepseek-r1"]
+    valid_models = ["gemma3", "qwen3", "sarvam-m", "gpt-oss"]
     if chat_request.model not in valid_models:
         raise HTTPException(status_code=400, detail=f"Invalid model. Choose from {valid_models}")
 
@@ -2209,6 +2209,7 @@ async def indic_visual_query_direct(
     except Exception as e:
         logger.error(f"Error processing request: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
+
 
 
 

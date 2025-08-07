@@ -2058,7 +2058,7 @@ import base64
 # Dynamic LLM client based on model
 def get_openai_client(model: str) -> OpenAI:
     """Initialize OpenAI client with model-specific base URL."""
-    valid_models = ["gemma3", "moondream", "qwen2.5vl", "qwen3", "sarvam-m", "deepseek-r1"]
+    valid_models = ["gemma3", "moondream", "qwen3", "sarvam-m", "gpt-oss"]
     if model not in valid_models:
         raise ValueError(f"Invalid model: {model}. Choose from: {', '.join(valid_models)}")
     
@@ -2066,9 +2066,8 @@ def get_openai_client(model: str) -> OpenAI:
         "qwen3": "9100",
         "gemma3": "9000",
         "moondream": "7882",
-        "qwen2.5vl": "7883",
+        "gpt-oss": "9500",
         "sarvam-m": "7884",
-        "deepseek-r1": "7885"
     }
     base_url = f"http://0.0.0.0:{model_ports[model]}/v1"
 

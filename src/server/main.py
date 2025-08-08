@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field
 import requests
 from typing import List, Optional, Dict, Any
 
-
+import json
 from time import time
 from typing import Optional
 # Assuming these are in your project structure
@@ -105,6 +105,14 @@ class VisualQueryRequest(BaseModel):
             }
         }
 
+class OCRRequest(BaseModel):
+    model: str = Field(default="gemma3", description="LLM model", enum=SUPPORTED_MODELS)
+    class Config:
+        schema_extra = {
+            "example": {
+                "model": "moondream"
+            }
+        }
 
 class VisualQueryDirectRequest(BaseModel):
     query: str = Field(..., description="Text query", max_length=1000)
@@ -119,6 +127,12 @@ class VisualQueryDirectRequest(BaseModel):
         }
 
 class VisualQueryResponse(BaseModel):
+    answer: str
+
+    class Config:
+        schema_extra = {"example": {"answer": "The image shows a screenshot of a webpage."}}
+
+class OCRResponse(BaseModel):
     answer: str
 
     class Config:
@@ -532,6 +546,33 @@ async def chat_v2(
         logger.error(f"Error processing request: {str(e)}")
         raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
 
+
+
+from num2words import num2words
+from datetime import datetime
+import pytz
+
+class Settings:
+    chat_rate_limit = "10/minute"
+    max_tokens = 500
+    openai_api_key = "http"
+
+def get_settings():
+    return Settings()
+
+def time_to_words():
+    ist = pytz.timezone('Asia/Kolkata')
+    now = datetime.now(ist)
+    hour = now.hour % 12 or 12
+    minute = now.minute
+    hour_word = num2words(hour, to='cardinal')
+    if minute == 0:
+        return f"{hour_word} o'clock"
+    else:
+        minute_word = num2words(minute, to='cardinal')
+        return f"{hour_word} hours and {minute_word} minutes"
+
+
 @app.post("/v1/chat_direct",
           response_model=ChatDirectResponse,
           summary="Chat with AI",
@@ -552,39 +593,41 @@ async def chat_direct(
         raise HTTPException(status_code=400, detail="Prompt cannot exceed 10000 characters")
 
     # Validate model parameter
-    valid_models = ["gemma3", "moondream", "qwen2.5vl", "qwen3", "sarvam-m", "deepseek-r1"]
+    valid_models = ["gemma3", "qwen3", "sarvam-m", "gpt-oss"]
     if chat_request.model not in valid_models:
         raise HTTPException(status_code=400, detail=f"Invalid model. Choose from {valid_models}")
 
-    logger.debug(f"Received prompt: {chat_request.prompt}, model: {chat_request.model}")
+    settings = get_settings()
+
+    logger.debug(f"Received prompt: {chat_request.prompt},  model: {chat_request.model}")
 
     try:
-        # Construct the external URL based on the selected model
-        base_url = os.getenv('DWANI_API_BASE_URL_LLM')
-        external_url = f"{base_url}/chat_direct"
+        prompt_to_process = chat_request.prompt
 
-        payload = {
-            "prompt": chat_request.prompt,
-            "model": chat_request.model,
-            "system_prompt" : chat_request.system_prompt
-        }
+        system_prompt = chat_request.system_prompt
 
-        response = requests.post(
-            external_url,
-            json=payload,
-            headers={
-                "accept": "application/json",
-                "Content-Type": "application/json"
-            },
-            timeout=30
+        current_time = time_to_words()
+
+        dwani_prompt = f"You are Dwani, a helpful assistant. Answer questions considering India as base country and Karnataka as base state. Provide a concise response in one sentence maximum. If the answer contains numerical digits, convert the digits into words. If user asks the time, then return answer as {current_time}" 
+        client = get_openai_client(chat_request.model)
+        response = client.chat.completions.create(
+            model=chat_request.model,
+            messages=[
+                {
+                    "role": "system",
+                #    "content": [{"type": "text", "text": f"You are Dwani, a helpful assistant. Answer questions considering India as base country and Karnataka as base state. Provide a concise response in one sentence maximum. If the answer contains numerical digits, convert the digits into words. If user asks the time, then return answer as {current_time}"}]
+                    "content": [{"type": "text", "text": system_prompt }]
+                
+                },
+                {"role": "user", "content": [{"type": "text", "text": prompt_to_process}]}
+            ],
+            temperature=0.3,
+            max_tokens=settings.max_tokens
         )
-        response.raise_for_status()
+        generated_response = response.choices[0].message.content
+        logger.debug(f"Generated response: {generated_response}")
 
-        response_data = response.json()
-        response_text = response_data.get("response", "")
-        logger.debug(f"Generated Chat response from external API: {response_text}, model: {chat_request.model}")
-
-        return ChatDirectResponse(response=response_text)
+        return ChatDirectResponse(response=generated_response)
 
     except requests.Timeout:
         logger.error("External chat API request timed out")
@@ -683,16 +726,8 @@ async def translate(
         raise HTTPException(status_code=400, detail="Sentences cannot be empty")
     
     # Validate language codes
-    translate_supported_languages = [
-        "eng_Latn", "hin_Deva", "kan_Knda", "tam_Taml", "mal_Mlym", "tel_Telu",
-        "asm_Beng", "kas_Arab" , "pan_Guru","ben_Beng" , "kas_Deva" , "san_Deva",
-        "brx_Deva", "mai_Deva" , "sat_Olck" , "doi_Deva", "mal_Mlym", "snd_Arab",
-        "mar_Deva" , "snd_Deva", "gom_Deva", "mni_Beng", "guj_Gujr", "mni_Mtei",
-        "npi_Deva", "urd_Arab", "ory_Orya",
-        "deu_Latn", "fra_Latn", "nld_Latn", "spa_Latn", "ita_Latn", "por_Latn",
-        "rus_Cyrl", "pol_Latn"
-    ]
-    if request.src_lang not in translate_supported_languages or request.tgt_lang not in translate_supported_languages:
+
+    if request.src_lang not in SUPPORTED_LANGUAGES or request.tgt_lang not in SUPPORTED_LANGUAGES:
         raise HTTPException(status_code=400, detail=f"Unsupported language codes: src={request.src_lang}, tgt={request.tgt_lang}")
 
     logger.debug(f"Received translation request: {len(request.sentences)} sentences, src_lang: {request.src_lang}, tgt_lang: {request.tgt_lang}")
@@ -769,20 +804,12 @@ async def visual_query(
     if len(query) > 10000:
         raise HTTPException(status_code=400, detail="Query cannot exceed 10000 characters")
 
-    supported_languages = [
-        "eng_Latn", "hin_Deva", "kan_Knda", "tam_Taml", "mal_Mlym", "tel_Telu",
-        "asm_Beng", "kas_Arab" , "pan_Guru","ben_Beng" , "kas_Deva" , "san_Deva",
-        "brx_Deva", "mai_Deva" , "sat_Olck" , "doi_Deva", "mal_Mlym", "snd_Arab",
-        "mar_Deva" , "snd_Deva", "gom_Deva", "mni_Beng", "guj_Gujr", "mni_Mtei",
-        "npi_Deva", "urd_Arab", "ory_Orya",
-        "deu_Latn", "fra_Latn", "nld_Latn", "spa_Latn", "ita_Latn", "por_Latn",
-        "rus_Cyrl", "pol_Latn"
-    ]
+    
 
-    if src_lang not in supported_languages:
-        raise HTTPException(status_code=400, detail=f"Unsupported source language: {src_lang}. Must be one of {supported_languages}")
-    if tgt_lang not in supported_languages:
-        raise HTTPException(status_code=400, detail=f"Unsupported target language: {tgt_lang}. Must be one of {supported_languages}")
+    if src_lang not in SUPPORTED_LANGUAGES:
+        raise HTTPException(status_code=400, detail=f"Unsupported source language: {src_lang}. Must be one of {SUPPORTED_LANGUAGES}")
+    if tgt_lang not in SUPPORTED_LANGUAGES:
+        raise HTTPException(status_code=400, detail=f"Unsupported target language: {tgt_lang}. Must be one of {SUPPORTED_LANGUAGES}")
 
     # Validate model
     validate_model(model)
@@ -843,6 +870,7 @@ async def visual_query(
 
 
 
+
 # Visual Query Endpoint
 @app.post("/v1/visual_query_direct",
           response_model=VisualQueryDirectResponse,
@@ -879,30 +907,19 @@ async def visual_query_direct(
         "model": model
     })
 
-    external_url = f"{os.getenv('DWANI_API_BASE_URL_VISION')}/visual-query-direct/"
-
     try:
-        file_content = await file.read()
-        if not file.content_type.startswith("image/png"):
-            raise HTTPException(status_code=400, detail="Only PNG images supported")
+        response = await indic_visual_query_direct(file=file, prompt=query, model=model)
+        # If response is a JSONResponse, extract and parse its body
+        if isinstance(response, JSONResponse):
+            response_body = json.loads(response.body.decode("utf-8"))
+            answer = response_body.get("response", "")
+        else:
+            # If response is already a dict, access it directly
+            answer = response.get("response", "")
 
-        files = {"file": (file.filename, file_content, file.content_type)}
-        data = {
-            "prompt": query,
-            "model": model
-        }
+        # Continue with your logic
+#        return {"answer": answer}
 
-        response = requests.post(
-            external_url,
-            files=files,
-            data=data,
-            headers={"accept": "application/json"},
-            timeout=30
-        )
-        response.raise_for_status()
-
-        response_data = response.json()
-        answer = response_data.get("response", "")
 
         if not answer:
             logger.warning(f"Empty or missing 'response' field in external API response: {response_data}")
@@ -1237,8 +1254,7 @@ async def extract_and_translate(
     if page_number < 1:
         raise HTTPException(status_code=400, detail="Page number must be at least 1")
 
-    supported_languages = ["kan_Knda", "hin_Deva", "tam_Taml", "tel_Telu", "eng_Latn"]
-    if src_lang not in supported_languages or tgt_lang not in supported_languages:
+    if src_lang not in SUPPORTED_LANGUAGES or tgt_lang not in SUPPORTED_LANGUAGES:
         raise HTTPException(status_code=400, detail=f"Invalid language codes: src={src_lang}, tgt={tgt_lang}")
 
     validate_model(model)
@@ -1872,10 +1888,9 @@ async def indic_custom_prompt_kannada_pdf(
     if not prompt.strip():
         raise HTTPException(status_code=400, detail="Prompt cannot be empty")
 
-    # Validate source language
-    supported_languages = ["eng_Latn", "hin_Deva", "kan_Knda", "tam_Taml", "mal_Mlym", "tel_Telu"]
-    if src_lang not in supported_languages:
-        raise HTTPException(status_code=400, detail=f"Unsupported source language: {src_lang}. Must be one of {supported_languages}")
+
+    if src_lang not in SUPPORTED_LANGUAGES:
+        raise HTTPException(status_code=400, detail=f"Unsupported source language: {src_lang}. Must be one of {SUPPORTED_LANGUAGES}")
 
     logger.debug("Processing Kannada PDF generation request", extra={
         "endpoint": "/v1/indic-custom-prompt-kannada-pdf",
@@ -2065,62 +2080,311 @@ class ProxyFeatures:
 
 from pydantic import BaseModel, ValidationError
 
-# Chat completions endpoint
-@app.post("/v1/chat/completions", response_model=ChatCompletionResponse)
-async def chat_completions(request: ChatCompletionRequest, fastapi_request: Request):
-    """Proxy chat completion requests to vLLM with custom features."""
-    start_time = time.time()
-    client_ip = fastapi_request.client.host
+from io import BytesIO
+from openai import OpenAI
+import base64
 
-    # Log request
-    ProxyFeatures.log_request(request.dict(), client_ip)
+# Dynamic LLM client based on model
+def get_openai_client(model: str) -> OpenAI:
+    """Initialize OpenAI client with model-specific base URL."""
+    valid_models = ["gemma3", "moondream", "qwen3", "sarvam-m", "gpt-oss"]
+    if model not in valid_models:
+        raise ValueError(f"Invalid model: {model}. Choose from: {', '.join(valid_models)}")
+    
+    model_ports = {
+        "qwen3": "9100",
+        "gemma3": "9000",
+        "moondream": "7882",
+        "gpt-oss": "9500",
+        "sarvam-m": "7884",
+    }
+    base_url = f"http://0.0.0.0:{model_ports[model]}/v1"
 
-    # Rate limiting
-    if not ProxyFeatures.rate_limit(client_ip):
-        raise HTTPException(status_code=429, detail="Rate limit exceeded")
+    return OpenAI(api_key="http", base_url=base_url)
 
-    # Forward request to vLLM
-    if request.stream:
-        raise HTTPException(status_code=501, detail="Streaming not supported yet")
+
+def encode_image(image: BytesIO) -> str:
+    """Encode image bytes to base64 string."""
+    return base64.b64encode(image.read()).decode("utf-8")
+
+
+ocr_query_string = "Return the plain text extracted from this image."
+
+def ocr_page_with_rolm_query(img_base64: str, query:str,  model: str) -> str:
+    """Perform OCR on the provided base64 image using the specified model."""
+    try:
+        client = get_openai_client(model)
+        response = client.chat.completions.create(
+            model=model,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": f"data:image/png;base64,{img_base64}"}
+                        },
+                        {"type": "text", "text": query}
+                    ]
+                }
+            ],
+            temperature=0.2,
+            max_tokens=4096
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"OCR processing failed: {str(e)}")
+
+
+# Visual Query Endpoint
+@app.post("/v1/ocr",
+          response_model=OCRResponse,
+          summary="OCR with Image",
+          description="Process a Image as OCR",
+          tags=["Chat"],
+          responses={
+              200: {"description": "Query response", "model": OCRResponse},
+              400: {"description": "Invalid query, image"},
+              422: {"description": "Validation error in request body"},
+              504: {"description": "Visual query service timeout"}
+          })
+async def ocr_query(
+    request: Request,
+    file: UploadFile = File(..., description="Image file to analyze (PNG only)"),
+    model: str = Query(default="gemma3", description="LLM model", enum=SUPPORTED_MODELS)
+):
+    # Validate model
+    validate_model(model)
+
+    logger.debug("Processing visual query direct request", extra={
+        "endpoint": "/v1/ocr",
+        "file_name": file.filename,
+        "client_ip": request.client.host,
+        "model": model
+    })
 
     try:
-        response = requests.post(
-            f"{VLLM_API_BASE}/chat/completions",
-            json=request.dict(),
-            headers=headers,
-            timeout=30
-        )
-        response.raise_for_status()
-        vllm_response = response.json()
+        response = await ocr_image(file=file)
+        
+        answer = response.get("extracted_text", "")
 
-        # Log raw response for debugging
-        logger.debug(f"vLLM raw response: {vllm_response}")
+        if not answer:
+            logger.warning(f"Empty or missing 'response' field in external API response: {answer}")
+            raise HTTPException(status_code=500, detail="No valid response provided by visual query direct service")
 
-        # Estimate usage if missing
-        vllm_response = ProxyFeatures.estimate_usage(request.dict(), vllm_response)
+        logger.debug(f"Visual query direct successful: {answer}")
+        return OCRResponse(answer=answer)
 
-        # Modify response
-        modified_response = ProxyFeatures.modify_response(vllm_response)
-
-        # Log response
-        processing_time = time.time() - start_time
-        ProxyFeatures.log_response(modified_response, processing_time)
-
-        # Validate and return response
-        return ChatCompletionResponse(**modified_response)
-
+    except requests.Timeout:
+        logger.error("Visual query direct request timed out")
+        raise HTTPException(status_code=504, detail="Visual query direct service timeout")
     except requests.RequestException as e:
-        logger.error(f"vLLM server error: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"vLLM error: {str(e)}")
-    except ValidationError as e:
-        logger.error(f"Response validation error: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Response validation error: {str(e)}")
+        logger.error(f"Error during visual query: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Visual query direct failed: {str(e)}")
+    except ValueError as e:
+        logger.error(f"Invalid JSON response: {str(e)}")
+        raise HTTPException(status_code=500, detail="Invalid response format from visual query direct service")
 
-# Health check endpoint
-@app.get("/health")
-async def health():
-    return {"status": "healthy"}
 
+@app.post("/ocr")
+async def ocr_image(file: UploadFile = File(...)):
+    if not file.content_type.startswith("image/png"):
+        raise HTTPException(status_code=400, detail="Only PNG images supported")
+
+    try:
+        image_bytes = await file.read()
+        image = BytesIO(image_bytes)
+        img_base64 = encode_image(image)
+        text = ocr_page_with_rolm_query(img_base64, ocr_query_string ,  model="gemma3")
+        return {"extracted_text": text}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error processing image: {str(e)}")
+
+
+from fastapi.responses import JSONResponse, FileResponse
+
+async def indic_visual_query_direct(
+    file: UploadFile = File(..., description="PNG image file to analyze"),
+    prompt: Optional[str] = Form(None, description="Optional custom prompt to process the extracted text"),
+    model: str = Form("gemma3", description="LLM model", enum=["gemma3", "moondream", "smolvla"])
+):
+    try:
+        if not file.content_type.startswith("image/png"):
+            raise HTTPException(status_code=400, detail="Only PNG images supported")
+
+        logger.debug(f"Processing indic visual query: model={model}, prompt={prompt[:50] if prompt else None}")
+
+        image_bytes = await file.read()
+        image = BytesIO(image_bytes)
+        img_base64 = encode_image(image)
+        extracted_text = ocr_page_with_rolm_query(img_base64,prompt, model)
+
+        response = extracted_text
+
+        result = {
+            "extracted_text": extracted_text,
+            "response": response
+        }
+        if response:
+            result["response"] = response
+
+        logger.debug(f"visual query direct successful: extracted_text_length={len(extracted_text)}")
+        return JSONResponse(content=result)
+
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Error translating: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error translating: {str(e)}")
+    except Exception as e:
+        logger.error(f"Error processing request: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
+
+
+
+
+from fastapi import FastAPI, APIRouter, HTTPException
+from fastapi.responses import JSONResponse
+import httpx
+from typing import Dict, Any
+from pydantic import BaseModel
+from starlette.requests import Request
+from starlette.responses import Response
+
+router = APIRouter()
+# Placeholder backend service URL (replace with actual URL)
+BACKEND_SERVICE_URL = "http://localhost:9000"
+
+# Helper function to forward requests
+async def forward_request(request: Request, target_url: str) -> Response:
+    async with httpx.AsyncClient() as client:
+        try:
+            # Forward the request with the same method, headers, and body
+            response = await client.request(
+                method=request.method,
+                url=target_url,
+                headers=request.headers,
+                content=await request.body(),
+                params=request.query_params
+            )
+            # Return the response from the backend
+            return JSONResponse(
+                content=response.json(),
+                status_code=response.status_code,
+                headers=dict(response.headers)
+            )
+        except httpx.RequestError as e:
+            raise HTTPException(status_code=500, detail=f"Error forwarding request: {str(e)}")
+
+# Define routes based on the provided log
+@router.get("/health")
+async def health(request: Request):
+    return await forward_request(request, f"{BACKEND_SERVICE_URL}/health")
+
+@router.get("/load")
+async def load(request: Request):
+    return await forward_request(request, f"{BACKEND_SERVICE_URL}/load")
+
+@router.get("/ping")
+@router.post("/ping")
+async def ping(request: Request):
+    return await forward_request(request, f"{BACKEND_SERVICE_URL}/ping")
+
+@router.post("/tokenize")
+async def tokenize(request: Request):
+    return await forward_request(request, f"{BACKEND_SERVICE_URL}/tokenize")
+
+@router.post("/detokenize")
+async def detokenize(request: Request):
+    return await forward_request(request, f"{BACKEND_SERVICE_URL}/detokenize")
+
+@router.get("/v1/models")
+async def models(request: Request):
+    return await forward_request(request, f"{BACKEND_SERVICE_URL}/v1/models")
+
+@router.get("/version")
+async def version(request: Request):
+    return await forward_request(request, f"{BACKEND_SERVICE_URL}/version")
+
+@router.post("/v1/responses")
+async def responses(request: Request):
+    return await forward_request(request, f"{BACKEND_SERVICE_URL}/v1/responses")
+
+@router.get("/v1/responses/{response_id}")
+async def get_response(response_id: str, request: Request):
+    return await forward_request(request, f"{BACKEND_SERVICE_URL}/v1/responses/{response_id}")
+
+@router.post("/v1/responses/{response_id}/cancel")
+async def cancel_response(response_id: str, request: Request):
+    return await forward_request(request, f"{BACKEND_SERVICE_URL}/v1/responses/{response_id}/cancel")
+
+@router.post("/v1/chat/completions")
+async def chat_completions(request: Request):
+    return await forward_request(request, f"{BACKEND_SERVICE_URL}/v1/chat/completions")
+
+@router.post("/v1/completions")
+async def completions(request: Request):
+    return await forward_request(request, f"{BACKEND_SERVICE_URL}/v1/completions")
+
+@router.post("/v1/embeddings")
+async def embeddings(request: Request):
+    return await forward_request(request, f"{BACKEND_SERVICE_URL}/v1/embeddings")
+
+@router.post("/pooling")
+async def pooling(request: Request):
+    return await forward_request(request, f"{BACKEND_SERVICE_URL}/pooling")
+
+@router.post("/classify")
+async def classify(request: Request):
+    return await forward_request(request, f"{BACKEND_SERVICE_URL}/classify")
+
+@router.post("/score")
+async def score(request: Request):
+    return await forward_request(request, f"{BACKEND_SERVICE_URL}/score")
+
+@router.post("/v1/score")
+async def v1_score(request: Request):
+    return await forward_request(request, f"{BACKEND_SERVICE_URL}/v1/score")
+
+@router.post("/v1/audio/transcriptions")
+async def audio_transcriptions(request: Request):
+    return await forward_request(request, f"{BACKEND_SERVICE_URL}/v1/audio/transcriptions")
+
+@router.post("/v1/audio/translations")
+async def audio_translations(request: Request):
+    return await forward_request(request, f"{BACKEND_SERVICE_URL}/v1/audio/translations")
+
+@router.post("/rerank")
+async def rerank(request: Request):
+    return await forward_request(request, f"{BACKEND_SERVICE_URL}/rerank")
+
+@router.post("/v1/rerank")
+async def v1_rerank(request: Request):
+    return await forward_request(request, f"{BACKEND_SERVICE_URL}/v1/rerank")
+
+@router.post("/v2/rerank")
+async def v2_rerank(request: Request):
+    return await forward_request(request, f"{BACKEND_SERVICE_URL}/v2/rerank")
+
+@router.post("/scale_elastic_ep")
+async def scale_elastic_ep(request: Request):
+    return await forward_request(request, f"{BACKEND_SERVICE_URL}/scale_elastic_ep")
+
+@router.post("/is_scaling_elastic_ep")
+async def is_scaling_elastic_ep(request: Request):
+    return await forward_request(request, f"{BACKEND_SERVICE_URL}/is_scaling_elastic_ep")
+
+@router.post("/invocations")
+async def invocations(request: Request):
+    return await forward_request(request, f"{BACKEND_SERVICE_URL}/invocations")
+
+@router.get("/metrics")
+async def metrics(request: Request):
+    return await forward_request(request, f"{BACKEND_SERVICE_URL}/metrics")
+
+# Include standard FastAPI routes (no forwarding needed for these)
+# /openapi.json, /docs, /docs/oauth2-redirect, /redoc are provided by FastAPI automatically
+
+# Include the router in the FastAPI app
+app.include_router(router)
 
 
 

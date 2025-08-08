@@ -546,6 +546,33 @@ async def chat_v2(
         logger.error(f"Error processing request: {str(e)}")
         raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
 
+
+
+from num2words import num2words
+from datetime import datetime
+import pytz
+
+class Settings:
+    chat_rate_limit = "10/minute"
+    max_tokens = 500
+    openai_api_key = "http"
+
+def get_settings():
+    return Settings()
+
+def time_to_words():
+    ist = pytz.timezone('Asia/Kolkata')
+    now = datetime.now(ist)
+    hour = now.hour % 12 or 12
+    minute = now.minute
+    hour_word = num2words(hour, to='cardinal')
+    if minute == 0:
+        return f"{hour_word} o'clock"
+    else:
+        minute_word = num2words(minute, to='cardinal')
+        return f"{hour_word} hours and {minute_word} minutes"
+
+
 @app.post("/v1/chat_direct",
           response_model=ChatDirectResponse,
           summary="Chat with AI",
@@ -570,35 +597,37 @@ async def chat_direct(
     if chat_request.model not in valid_models:
         raise HTTPException(status_code=400, detail=f"Invalid model. Choose from {valid_models}")
 
-    logger.debug(f"Received prompt: {chat_request.prompt}, model: {chat_request.model}")
+    settings = get_settings()
+
+    logger.debug(f"Received prompt: {chat_request.prompt},  model: {chat_request.model}")
 
     try:
-        # Construct the external URL based on the selected model
-        base_url = os.getenv('DWANI_API_BASE_URL_LLM')
-        external_url = f"{base_url}/chat_direct"
+        prompt_to_process = chat_request.prompt
 
-        payload = {
-            "prompt": chat_request.prompt,
-            "model": chat_request.model,
-            "system_prompt" : chat_request.system_prompt
-        }
+        system_prompt = chat_request.system_prompt
 
-        response = requests.post(
-            external_url,
-            json=payload,
-            headers={
-                "accept": "application/json",
-                "Content-Type": "application/json"
-            },
-            timeout=30
+        current_time = time_to_words()
+
+        dwani_prompt = f"You are Dwani, a helpful assistant. Answer questions considering India as base country and Karnataka as base state. Provide a concise response in one sentence maximum. If the answer contains numerical digits, convert the digits into words. If user asks the time, then return answer as {current_time}" 
+        client = get_openai_client(chat_request.model)
+        response = client.chat.completions.create(
+            model=chat_request.model,
+            messages=[
+                {
+                    "role": "system",
+                #    "content": [{"type": "text", "text": f"You are Dwani, a helpful assistant. Answer questions considering India as base country and Karnataka as base state. Provide a concise response in one sentence maximum. If the answer contains numerical digits, convert the digits into words. If user asks the time, then return answer as {current_time}"}]
+                    "content": [{"type": "text", "text": system_prompt }]
+                
+                },
+                {"role": "user", "content": [{"type": "text", "text": prompt_to_process}]}
+            ],
+            temperature=0.3,
+            max_tokens=settings.max_tokens
         )
-        response.raise_for_status()
+        generated_response = response.choices[0].message.content
+        logger.debug(f"Generated response: {generated_response}")
 
-        response_data = response.json()
-        response_text = response_data.get("response", "")
-        logger.debug(f"Generated Chat response from external API: {response_text}, model: {chat_request.model}")
-
-        return ChatDirectResponse(response=response_text)
+        return ChatDirectResponse(response=generated_response)
 
     except requests.Timeout:
         logger.error("External chat API request timed out")
@@ -2072,77 +2101,6 @@ def get_openai_client(model: str) -> OpenAI:
     base_url = f"http://0.0.0.0:{model_ports[model]}/v1"
 
     return OpenAI(api_key="http", base_url=base_url)
-
-
-
-from num2words import num2words
-from datetime import datetime
-import pytz
-
-class Settings:
-    chat_rate_limit = "10/minute"
-    max_tokens = 500
-    openai_api_key = "http"
-
-def get_settings():
-    return Settings()
-
-def time_to_words():
-    ist = pytz.timezone('Asia/Kolkata')
-    now = datetime.now(ist)
-    hour = now.hour % 12 or 12
-    minute = now.minute
-    hour_word = num2words(hour, to='cardinal')
-    if minute == 0:
-        return f"{hour_word} o'clock"
-    else:
-        minute_word = num2words(minute, to='cardinal')
-        return f"{hour_word} hours and {minute_word} minutes"
-
-@app.post("/chat_direct")
-async def chat_direct(
-    request: Request,
-    chat_request: ChatDirectRequest,
-    settings=Depends(get_settings)
-):
-    if not chat_request.prompt.strip():
-        raise HTTPException(status_code=400, detail="Prompt cannot be empty")
-
-    logger.debug(f"Received prompt: {chat_request.prompt},  model: {chat_request.model}")
-
-    try:
-        prompt_to_process = chat_request.prompt
-
-        system_prompt = chat_request.system_prompt
-
-        current_time = time_to_words()
-
-        dwani_prompt = f"You are Dwani, a helpful assistant. Answer questions considering India as base country and Karnataka as base state. Provide a concise response in one sentence maximum. If the answer contains numerical digits, convert the digits into words. If user asks the time, then return answer as {current_time}" 
-        client = get_openai_client(chat_request.model)
-        response = client.chat.completions.create(
-            model=chat_request.model,
-            messages=[
-                {
-                    "role": "system",
-                #    "content": [{"type": "text", "text": f"You are Dwani, a helpful assistant. Answer questions considering India as base country and Karnataka as base state. Provide a concise response in one sentence maximum. If the answer contains numerical digits, convert the digits into words. If user asks the time, then return answer as {current_time}"}]
-                    "content": [{"type": "text", "text": system_prompt }]
-                
-                },
-                {"role": "user", "content": [{"type": "text", "text": prompt_to_process}]}
-            ],
-            temperature=0.3,
-            max_tokens=settings.max_tokens
-        )
-        generated_response = response.choices[0].message.content
-        logger.info(f"Generated response: {generated_response}")
-
-
-        return JSONResponse(content={"response": generated_response})
-
-    except Exception as e:
-        logger.error(f"Error processing request: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
-
 
 
 def encode_image(image: BytesIO) -> str:

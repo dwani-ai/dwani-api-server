@@ -11,3 +11,5 @@ passlib[bcrypt]
 pycryptodome
 openai
 httpx
+num2words
+pytz

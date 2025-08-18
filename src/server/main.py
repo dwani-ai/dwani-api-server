@@ -501,40 +501,32 @@ async def chat_v2(
         raise HTTPException(status_code=400, detail="Prompt cannot exceed 10000 characters")
 
     # Validate model parameter
-    valid_models = ["gemma3", "moondream", "qwen2.5vl", "qwen3", "sarvam-m", "deepseek-r1"]
+    logger.debug(f"Received prompt: {chat_request.prompt}, src_lang: {chat_request.src_lang}, tgt_lang: {chat_request.tgt_lang}, model: {chat_request.model}")
+
+    valid_models = ["gemma3", "qwen3", "sarvam-m", "gpt-oss"]
     if chat_request.model not in valid_models:
         raise HTTPException(status_code=400, detail=f"Invalid model. Choose from {valid_models}")
 
-    logger.debug(f"Received prompt: {chat_request.prompt}, src_lang: {chat_request.src_lang}, tgt_lang: {chat_request.tgt_lang}, model: {chat_request.model}")
+    settings = get_settings()
+
+    logger.debug(f"Received prompt: {chat_request.prompt},  model: {chat_request.model}")
 
     try:
-        # Construct the external URL based on the selected model
-        base_url = os.getenv('DWANI_API_BASE_URL_LLM')
-        external_url = f"{base_url}/indic_chat"
+        prompt_to_process = chat_request.prompt
 
-        payload = {
-            "prompt": chat_request.prompt,
-            "src_lang": chat_request.src_lang,
-            "tgt_lang": chat_request.tgt_lang,
-            "model": chat_request.model
-        }
-
-        response = requests.post(
-            external_url,
-            json=payload,
-            headers={
-                "accept": "application/json",
-                "Content-Type": "application/json"
-            },
-            timeout=30
+        client = get_openai_client(chat_request.model)
+        response = client.chat.completions.create(
+            model=chat_request.model,
+            messages=[
+                {"role": "user", "content": [{"type": "text", "text": prompt_to_process}]}
+            ],
+            temperature=0.3,
+            max_tokens=settings.max_tokens
         )
-        response.raise_for_status()
+        generated_response = response.choices[0].message.content
+        logger.debug(f"Generated response: {generated_response}")
 
-        response_data = response.json()
-        response_text = response_data.get("response", "")
-        logger.debug(f"Generated Chat response from external API: {response_text}, model: {chat_request.model}")
-
-        return ChatResponse(response=response_text)
+        return ChatDirectResponse(response=generated_response)
 
     except requests.Timeout:
         logger.error("External chat API request timed out")
@@ -545,8 +537,6 @@ async def chat_v2(
     except Exception as e:
         logger.error(f"Error processing request: {str(e)}")
         raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
-
-
 
 from num2words import num2words
 from datetime import datetime

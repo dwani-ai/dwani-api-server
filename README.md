@@ -18,3 +18,7 @@ docker build -t dwani/api-server:latest -f Dockerfile .
 
 docker run  --env-file .env dwani/api-server:latest
 -->
+
+
+sudo apt update
+sudo apt install libgirepository1.0-dev libcairo2-dev python3-dev pkg-config build-essential

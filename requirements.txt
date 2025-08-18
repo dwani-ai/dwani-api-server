@@ -18,9 +18,9 @@ opencv-python
 dwani
 sounddevice
 scipy
-playsound
-pytz
-pygobject
+#playsound
+#pytz
+#pygobject
 ultralytics
 fastapi
 uvicorn

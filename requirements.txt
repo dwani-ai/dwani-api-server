@@ -13,3 +13,15 @@ openai
 httpx
 num2words
 pytz
+
+opencv-python
+dwani
+sounddevice
+scipy
+playsound
+pytz
+pygobject
+ultralytics
+fastapi
+uvicorn
+python-multipart

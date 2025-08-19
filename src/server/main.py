@@ -821,7 +821,8 @@ async def visual_query(
     image_bytes = await file.read()
     image = BytesIO(image_bytes)
     img_base64 = encode_image(image)
-    extracted_text = ocr_page_with_rolm_query(img_base64, query, model)
+    system_prompt = ""
+    extracted_text = vision_query(img_base64, query, model, system_query=system_prompt)
 
     response = extracted_text
 
@@ -2090,6 +2091,40 @@ def ocr_page_with_rolm_query(img_base64: str, query:str,  model: str) -> str:
                             "image_url": {"url": f"data:image/png;base64,{img_base64}"}
                         },
                         {"type": "text", "text": query}
+                    ]
+                }
+            ],
+            temperature=0.2,
+            max_tokens=4096
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"OCR processing failed: {str(e)}")
+
+
+def vision_query(img_base64: str, user_query:str,  model: str, system_query:str) -> str:
+    """Perform OCR on the provided base64 image using the specified model."""
+
+    system_query = f"You are Dwani, a helpful assistant. Answer questions considering India as base country and Karnataka as base state. Provide a concise response in one sentence maximum. If the answer contains numerical digits, convert the digits into words. If user asks the time, then return answer as {current_time}" 
+    try:
+        client = get_openai_client(model)
+        response = client.chat.completions.create(
+            model=model,
+            messages=[
+                {
+                    "role": "system",
+                    "content": [{"type": "text", "text": system_query }]
+                
+                },
+                {
+
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": f"data:image/png;base64,{img_base64}"}
+                        },
+                        {"type": "text", "text": user_query}
                     ]
                 }
             ],

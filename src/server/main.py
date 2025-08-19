@@ -833,7 +833,7 @@ async def visual_query(
         result["response"] = response
 
     logger.debug(f"visual query direct successful: extracted_text_length={len(extracted_text)}")
-    return JSONResponse(content=result)
+    return VisualQueryResponse(answer=extracted_text)
 
 
 # Visual Query Endpoint

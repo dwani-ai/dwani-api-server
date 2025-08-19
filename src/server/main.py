@@ -794,7 +794,6 @@ async def visual_query(
     if len(query) > 10000:
         raise HTTPException(status_code=400, detail="Query cannot exceed 10000 characters")
 
-    
 
     if src_lang not in SUPPORTED_LANGUAGES:
         raise HTTPException(status_code=400, detail=f"Unsupported source language: {src_lang}. Must be one of {SUPPORTED_LANGUAGES}")
@@ -814,51 +813,27 @@ async def visual_query(
         "model": model
     })
 
-    external_url = f"{os.getenv('DWANI_API_BASE_URL_VISION')}/indic-visual-query/"
+    if not file.content_type.startswith("image/png"):
+        raise HTTPException(status_code=400, detail="Only PNG images supported")
 
-    try:
-        file_content = await file.read()
-        if not file.content_type.startswith("image/png"):
-            raise HTTPException(status_code=400, detail="Only PNG images supported")
+    logger.debug(f"Processing indic visual query: model={model}, prompt={query[:50] if query else None}")
 
-        files = {"file": (file.filename, file_content, file.content_type)}
-        data = {
-            "prompt": query,
-            "source_language": src_lang,
-            "target_language": tgt_lang,
-            "model": model
-        }
+    image_bytes = await file.read()
+    image = BytesIO(image_bytes)
+    img_base64 = encode_image(image)
+    extracted_text = ocr_page_with_rolm_query(img_base64, query, model)
 
-        response = requests.post(
-            external_url,
-            files=files,
-            data=data,
-            headers={"accept": "application/json"},
-            timeout=30
-        )
-        response.raise_for_status()
+    response = extracted_text
 
-        response_data = response.json()
-        answer = response_data.get("translated_response", "")
+    result = {
+        "extracted_text": extracted_text,
+        "response": response
+    }
+    if response:
+        result["response"] = response
 
-        if not answer:
-            logger.warning(f"Empty or missing 'translated_response' field in external API response: {response_data}")
-            raise HTTPException(status_code=500, detail="No valid response provided by visual query service")
-
-        logger.debug(f"Visual query successful: {answer}")
-        return VisualQueryResponse(answer=answer)
-
-    except requests.Timeout:
-        logger.error("Visual query request timed out")
-        raise HTTPException(status_code=504, detail="Visual query service timeout")
-    except requests.RequestException as e:
-        logger.error(f"Error during visual query: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Visual query failed: {str(e)}")
-    except ValueError as e:
-        logger.error(f"Invalid JSON response: {str(e)}")
-        raise HTTPException(status_code=500, detail="Invalid response format from visual query service")
-
-
+    logger.debug(f"visual query direct successful: extracted_text_length={len(extracted_text)}")
+    return JSONResponse(content=result)
 
 
 # Visual Query Endpoint

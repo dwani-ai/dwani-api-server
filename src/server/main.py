@@ -2105,7 +2105,7 @@ def ocr_page_with_rolm_query(img_base64: str, query:str,  model: str) -> str:
 def vision_query(img_base64: str, user_query:str,  model: str, system_query:str) -> str:
     """Perform OCR on the provided base64 image using the specified model."""
 
-    system_query = f"You are Dwani, a helpful assistant. Answer questions considering India as base country and Karnataka as base state. Provide a concise response in one sentence maximum. If the answer contains numerical digits, convert the digits into words. If user asks the time, then return answer as {current_time}" 
+    system_query = f"You are Dwani, a helpful assistant. Answer questions considering India as base country and Karnataka as base state. Provide a concise response in one sentence maximum." 
     try:
         client = get_openai_client(model)
         response = client.chat.completions.create(

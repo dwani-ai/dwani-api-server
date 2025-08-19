@@ -768,6 +768,30 @@ class VisualQueryResponse(BaseModel):
     class Config:
         schema_extra = {"example": {"answer": "The image shows a screenshot of a webpage."}}
 
+
+
+language_options = [
+    ("English", "eng_Latn"),
+    ("Kannada", "kan_Knda"),
+    ("Hindi", "hin_Deva"), 
+    ("Assamese", "asm_Beng"),
+    ("Bengali","ben_Beng"),
+    ("Gujarati","guj_Gujr"),
+    ("Malayalam","mal_Mlym"),
+    ("Marathi","mar_Deva"),
+    ("Odia","ory_Orya"),
+    ("Punjabi","pan_Guru"),
+    ("Tamil","tam_Taml"),
+    ("Telugu","tel_Telu"),
+    ("German","deu_Latn"),
+]
+
+def get_language_name(lang_code):
+    for name, code in language_options:
+        if code == lang_code:
+            return name
+    return "English"
+
 # Visual Query Endpoint
 @app.post("/v1/indic_visual_query",
           response_model=VisualQueryResponse,
@@ -822,7 +846,9 @@ async def visual_query(
     image = BytesIO(image_bytes)
     img_base64 = encode_image(image)
     
-    system_prompt = f"You are dwani, a helpful assistant. Answer questions considering India as base country and Karnataka as base state. Provide a concise response in one sentence maximum. Return answer in {tgt_lang}" 
+    language_name = get_language_name(tgt_lang)
+
+    system_prompt = f"You are dwani, a helpful assistant. Answer questions considering India as base country and Karnataka as base state. Provide a concise response in one sentence maximum. Return answer in {language_name}" 
 
     extracted_text = vision_query(img_base64, query, model, system_prompt=system_prompt)
 

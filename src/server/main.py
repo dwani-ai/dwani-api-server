@@ -511,6 +511,10 @@ async def chat_v2(
 
     logger.debug(f"Received prompt: {chat_request.prompt},  model: {chat_request.model}")
 
+    language_name = get_language_name(chat_request.tgt_lang)
+
+    system_prompt = f"You are dwani, a helpful assistant. Answer questions considering India as base country and Karnataka as base state. Provide a concise response in one sentence maximum. Do not explain .  Return answer only in {language_name}" 
+
     try:
         prompt_to_process = chat_request.prompt
 
@@ -518,6 +522,11 @@ async def chat_v2(
         response = client.chat.completions.create(
             model=chat_request.model,
             messages=[
+                {
+                    "role": "system",
+                    "content": [{"type": "text", "text": system_prompt }]
+                
+                },
                 {"role": "user", "content": [{"type": "text", "text": prompt_to_process}]}
             ],
             temperature=0.3,

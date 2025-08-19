@@ -821,8 +821,10 @@ async def visual_query(
     image_bytes = await file.read()
     image = BytesIO(image_bytes)
     img_base64 = encode_image(image)
-    system_prompt = ""
-    extracted_text = vision_query(img_base64, query, model, system_query=system_prompt)
+    
+    system_prompt = f"You are dwani, a helpful assistant. Answer questions considering India as base country and Karnataka as base state. Provide a concise response in one sentence maximum. Return answer in {tgt_lang}" 
+
+    extracted_text = vision_query(img_base64, query, model, system_prompt=system_prompt)
 
     response = extracted_text
 
@@ -2102,10 +2104,9 @@ def ocr_page_with_rolm_query(img_base64: str, query:str,  model: str) -> str:
         raise HTTPException(status_code=500, detail=f"OCR processing failed: {str(e)}")
 
 
-def vision_query(img_base64: str, user_query:str,  model: str, system_query:str) -> str:
+def vision_query(img_base64: str, user_query:str,  model: str, system_prompt:str) -> str:
     """Perform OCR on the provided base64 image using the specified model."""
 
-    system_query = f"You are Dwani, a helpful assistant. Answer questions considering India as base country and Karnataka as base state. Provide a concise response in one sentence maximum." 
     try:
         client = get_openai_client(model)
         response = client.chat.completions.create(
@@ -2113,11 +2114,10 @@ def vision_query(img_base64: str, user_query:str,  model: str, system_query:str)
             messages=[
                 {
                     "role": "system",
-                    "content": [{"type": "text", "text": system_query }]
+                    "content": [{"type": "text", "text": system_prompt }]
                 
                 },
                 {
-
                     "role": "user",
                     "content": [
                         {

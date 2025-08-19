@@ -9,6 +9,9 @@ from fastapi.responses import FileResponse
 from fastapi.background import BackgroundTasks
 import tempfile
 import os
+from pathlib import Path
+from openai import OpenAI
+
     
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile, Form, Query
 from pydantic import BaseModel, Field
@@ -21,14 +24,31 @@ from typing import List, Optional, Dict, Any
 import json
 from time import time
 from typing import Optional
-# Assuming these are in your project structure
-#from config.tts_config import SPEED, ResponseFormat, config as tts_config
-#from config.logging_config import logger
+from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi.responses import Response, JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
+from ultralytics import YOLO
+import cv2
+import numpy as np
+
+
+from num2words import num2words
+from datetime import datetime
+import pytz
+
+
 
 import logging
 import logging.config
 from logging.handlers import RotatingFileHandler
 
+class Settings:
+    chat_rate_limit = "10/minute"
+    max_tokens = 500
+    openai_api_key = "http"
+
+def get_settings():
+    return Settings()
 logging_config = {
     "version": 1,
     "disable_existing_loggers": False,
@@ -75,6 +95,37 @@ app = FastAPI(
     ],
 )
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[ "https://*.hf.space",
+        "https://dwani.ai",
+        "https://*.dwani.ai",
+        "https://dwani-*.hf.space",
+        "http://localhost:11080"
+        ],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+# Endpoints with enhanced Swagger docs
+@app.get("/v1/health", 
+         summary="Check API Health",
+         description="Returns the health status of the API and the current model in use.",
+         tags=["Utility"],
+         response_model=dict)
+async def health_check():
+    return {"status": "healthy", "model": "llm_model_name"}  # Placeholder model name
+
+@app.get("/",
+         summary="Redirect to Docs",
+         description="Redirects to the Swagger UI documentation.",
+         tags=["Utility"])
+async def home():
+    return RedirectResponse(url="/docs")
+
+
 # Supported models
 SUPPORTED_MODELS = ["gemma3", "moondream", "qwen2.5vl", "qwen3", "sarvam-m", "deepseek-r1"]
 
@@ -87,6 +138,80 @@ SUPPORTED_LANGUAGES = [
         "deu_Latn", "fra_Latn", "nld_Latn", "spa_Latn", "ita_Latn", "por_Latn",
         "rus_Cyrl", "pol_Latn"
     ]
+
+
+
+model = YOLO("yolov8l.pt")  # example for large model with better accuracy
+
+
+def read_imagefile(file) -> np.ndarray:
+    image_bytes = file.file.read()
+    np_arr = np.frombuffer(image_bytes, np.uint8)
+    image = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+    if image is None:
+        raise HTTPException(status_code=400, detail="Invalid image")
+    return image
+
+@app.post("/detect/")
+async def detect(
+    image_file: UploadFile = File(...),
+    confidence_threshold: float = Query(0.9, gt=0, lt=1, description="Minimum confidence threshold for detections"),
+    top_k: int = Query(5, gt=0, description="Maximum number of top detections to return, sorted by confidence")
+):
+    image = read_imagefile(image_file)
+    results = model(image)
+    detections = []
+    for result in results:
+        for box in result.boxes:
+            x1, y1, x2, y2 = box.xyxy[0].cpu().numpy().astype(int)
+            confidence = float(box.conf.cpu().numpy().item())
+            class_id = int(box.cls.cpu().numpy().item())
+            label = model.names[class_id]
+            if confidence >= confidence_threshold:
+                detections.append({
+                    "box": [int(x1), int(y1), int(x2), int(y2)],
+                    "confidence": confidence,
+                    "class_id": class_id,
+                    "label": label
+                })
+    detections = sorted(detections, key=lambda x: x["confidence"], reverse=True)[:top_k]
+    return {"detections": detections}
+
+@app.post("/detect-image/")
+async def detect_image(
+    image_file: UploadFile = File(...),
+    confidence_threshold: float = Query(0.9, gt=0, lt=1, description="Minimum confidence threshold for detections"),
+    top_k: int = Query(5, gt=0, description="Maximum number of top detections to draw, sorted by confidence")
+):
+    image = read_imagefile(image_file)
+    results = model(image)
+    detections = []
+    for result in results:
+        for box in result.boxes:
+            confidence = float(box.conf.cpu().numpy().item())
+            class_id = int(box.cls.cpu().numpy().item())
+            label = model.names[class_id]
+            if confidence >= confidence_threshold:
+                x1, y1, x2, y2 = box.xyxy[0].cpu().numpy().astype(int)
+                detections.append({
+                    "box": (x1, y1, x2, y2),
+                    "confidence": confidence,
+                    "label": label
+                })
+
+    top_detections = sorted(detections, key=lambda x: x["confidence"], reverse=True)[:top_k]
+
+    for det in top_detections:
+        x1, y1, x2, y2 = det["box"]
+        label = det["label"]
+        confidence = det["confidence"]
+        cv2.rectangle(image, (x1, y1), (x2, y2), (0, 255, 0), 2)
+        cv2.putText(image, f"{label} {confidence:.2f}", (x1, y1 - 10),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
+
+    _, img_encoded = cv2.imencode('.jpg', image)
+    return Response(content=img_encoded.tobytes(), media_type="image/jpeg")
+
 
 # Pydantic models (updated to include model validation)
 class VisualQueryRequest(BaseModel):
@@ -224,18 +349,6 @@ def validate_language(lang: str, field_name: str) -> str:
         raise HTTPException(status_code=400, detail=f"Invalid {field_name}: {lang}. Must be one of {SUPPORTED_LANGUAGES}")
     return lang
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[ "https://*.hf.space",
-        "https://dwani.ai",
-        "https://*.dwani.ai",
-        "https://dwani-*.hf.space",
-        "http://localhost:11080"
-        ],
-    allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 
 # Request/Response Models
 class TranscriptionResponse(BaseModel):
@@ -341,24 +454,6 @@ class VisualQueryResponse(BaseModel):
     class Config:
         schema_extra = {"example": {"answer": "The image shows a screenshot of a webpage."}}
 
-# Endpoints with enhanced Swagger docs
-@app.get("/v1/health", 
-         summary="Check API Health",
-         description="Returns the health status of the API and the current model in use.",
-         tags=["Utility"],
-         response_model=dict)
-async def health_check():
-    return {"status": "healthy", "model": "llm_model_name"}  # Placeholder model name
-
-@app.get("/",
-         summary="Redirect to Docs",
-         description="Redirects to the Swagger UI documentation.",
-         tags=["Utility"])
-async def home():
-    return RedirectResponse(url="/docs")
-
-from pathlib import Path
-from openai import OpenAI
 
 @app.post("/v1/audio/speech",
           summary="Generate Speech from Text",
@@ -547,17 +642,6 @@ async def chat_v2(
         logger.error(f"Error processing request: {str(e)}")
         raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
 
-from num2words import num2words
-from datetime import datetime
-import pytz
-
-class Settings:
-    chat_rate_limit = "10/minute"
-    max_tokens = 500
-    openai_api_key = "http"
-
-def get_settings():
-    return Settings()
 
 def time_to_words():
     ist = pytz.timezone('Asia/Kolkata')
@@ -925,7 +1009,7 @@ async def visual_query_direct(
 
 
         if not answer:
-            logger.warning(f"Empty or missing 'response' field in external API response: {response_data}")
+            logger.warning(f"Empty or missing 'response' field in external API response: {answer}")
             raise HTTPException(status_code=500, detail="No valid response provided by visual query direct service")
 
         logger.debug(f"Visual query direct successful: {answer}")
@@ -1972,114 +2056,6 @@ async def indic_custom_prompt_kannada_pdf(
         temp_file.close()
 
 
-from collections import defaultdict
-from dotenv import load_dotenv
-load_dotenv()
-
-import time
-
-# vLLM server configuration
-VLLM_API_BASE = os.getenv("VLLM_API_BASE", "http://localhost:9000/v1")
-VLLM_API_KEY = os.getenv("VLLM_API_KEY", "")
-
-# HTTP headers for vLLM requests
-headers = {
-    "Content-Type": "application/json",
-    "Authorization": f"Bearer {VLLM_API_KEY}" if VLLM_API_KEY else None
-}
-headers = {k: v for k, v in headers.items() if v is not None}
-
-# In-memory storage for rate limiting
-rate_limit_store = defaultdict(list)
-
-# Pydantic models for OpenAI-compatible API
-class Message(BaseModel):
-    role: str
-    content: str
-
-class ChatCompletionRequest(BaseModel):
-    model: str
-    messages: List[Message]
-    temperature: Optional[float] = 0.7
-    max_tokens: Optional[int] = 512
-    top_p: Optional[float] = 1.0
-    stream: Optional[bool] = False
-
-class ChatCompletionChoice(BaseModel):
-    index: int
-    message: Message
-    finish_reason: Optional[str] = None
-
-class Usage(BaseModel):
-    prompt_tokens: Optional[int] = None
-    completion_tokens: Optional[int] = None
-    total_tokens: Optional[int] = None
-
-class ChatCompletionResponse(BaseModel):
-    id: str
-    object: str = "chat.completion"
-    created: int
-    model: str
-    choices: List[ChatCompletionChoice]
-    usage: Optional[Usage] = None
-
-# Custom features
-class ProxyFeatures:
-    @staticmethod
-    def log_request(request: Dict, client_ip: str) -> None:
-        """Log incoming request details."""
-        logger.debug(
-            f"Request from {client_ip}: model={request.get('model')}, "
-            f"messages={len(request.get('messages', []))} messages"
-        )
-
-    @staticmethod
-    def log_response(response: Dict, processing_time: Optional[float] = None) -> None:
-        """Log response details."""
-        logger.debug(
-            f"Response: id={response.get('id')}, choices={len(response.get('choices', []))}, "
-            f"processing_time={processing_time:.2f}s" if processing_time else "processing_time=unknown"
-        )
-
-    @staticmethod
-    def rate_limit(client_ip: str, max_requests: int = 10, window_seconds: int = 60) -> bool:
-        """In-memory rate limiting per client IP."""
-        current_time = time.time()
-        rate_limit_store[client_ip] = [
-            t for t in rate_limit_store[client_ip] if current_time - t < window_seconds
-        ]
-        rate_limit_store[client_ip].append(current_time)
-        if len(rate_limit_store[client_ip]) > max_requests:
-            logger.warning(f"Rate limit exceeded for {client_ip}")
-            return False
-        return True
-
-    @staticmethod
-    def modify_response(response: Dict) -> Dict:
-        """Modify response (e.g., add disclaimer)."""
-        for choice in response.get('choices', []):
-            choice['message']['content'] = (
-                f"{choice['message']['content']}\n\n*Disclaimer: Generated by AI, verify before use.*"
-            )
-        return response
-
-    @staticmethod
-    def estimate_usage(request: Dict, response: Dict) -> Dict:
-        """Estimate token usage if not provided by vLLM."""
-        if response.get('usage') is None or not all(
-            key in response['usage'] for key in ['prompt_tokens', 'completion_tokens', 'total_tokens']
-        ):
-            prompt_text = ' '.join(msg.get('content', '') for msg in request.get('messages', []))
-            response_text = response.get('choices', [{}])[0].get('message', {}).get('content', '')
-            # Rough token estimation (1 token ~ 4 characters, minimum 1 token)
-            prompt_tokens = max(len(prompt_text) // 4, 1)
-            completion_tokens = max(len(response_text) // 4, 1)
-            response['usage'] = {
-                'prompt_tokens': prompt_tokens,
-                'completion_tokens': completion_tokens,
-                'total_tokens': prompt_tokens + completion_tokens
-            }
-        return response
 
 from pydantic import BaseModel, ValidationError
 
@@ -2273,85 +2249,6 @@ async def indic_visual_query_direct(
         logger.error(f"Error processing request: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
 
-
-from fastapi import FastAPI, UploadFile, File, HTTPException
-from fastapi.responses import Response, JSONResponse
-from fastapi.middleware.cors import CORSMiddleware
-from ultralytics import YOLO
-import cv2
-import numpy as np
-
-
-model = YOLO("yolov8l.pt")  # example for large model with better accuracy
-
-
-def read_imagefile(file) -> np.ndarray:
-    image_bytes = file.file.read()
-    np_arr = np.frombuffer(image_bytes, np.uint8)
-    image = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
-    if image is None:
-        raise HTTPException(status_code=400, detail="Invalid image")
-    return image
-
-@app.post("/detect/")
-async def detect(
-    image_file: UploadFile = File(...),
-    confidence_threshold: float = Query(0.9, gt=0, lt=1, description="Minimum confidence threshold for detections"),
-    top_k: int = Query(5, gt=0, description="Maximum number of top detections to return, sorted by confidence")
-):
-    image = read_imagefile(image_file)
-    results = model(image)
-    detections = []
-    for result in results:
-        for box in result.boxes:
-            x1, y1, x2, y2 = box.xyxy[0].cpu().numpy().astype(int)
-            confidence = float(box.conf.cpu().numpy().item())
-            class_id = int(box.cls.cpu().numpy().item())
-            label = model.names[class_id]
-            if confidence >= confidence_threshold:
-                detections.append({
-                    "box": [int(x1), int(y1), int(x2), int(y2)],
-                    "confidence": confidence,
-                    "class_id": class_id,
-                    "label": label
-                })
-    detections = sorted(detections, key=lambda x: x["confidence"], reverse=True)[:top_k]
-    return {"detections": detections}
-
-@app.post("/detect-image/")
-async def detect_image(
-    image_file: UploadFile = File(...),
-    confidence_threshold: float = Query(0.9, gt=0, lt=1, description="Minimum confidence threshold for detections"),
-    top_k: int = Query(5, gt=0, description="Maximum number of top detections to draw, sorted by confidence")
-):
-    image = read_imagefile(image_file)
-    results = model(image)
-    detections = []
-    for result in results:
-        for box in result.boxes:
-            confidence = float(box.conf.cpu().numpy().item())
-            class_id = int(box.cls.cpu().numpy().item())
-            label = model.names[class_id]
-            if confidence >= confidence_threshold:
-                x1, y1, x2, y2 = box.xyxy[0].cpu().numpy().astype(int)
-                detections.append({
-                    "box": (x1, y1, x2, y2),
-                    "confidence": confidence,
-                    "label": label
-                })
-
-    top_detections = sorted(detections, key=lambda x: x["confidence"], reverse=True)[:top_k]
-
-    for det in top_detections:
-        x1, y1, x2, y2 = det["box"]
-        label = det["label"]
-        confidence = det["confidence"]
-        cv2.rectangle(image, (x1, y1), (x2, y2), (0, 255, 0), 2)
-        cv2.putText(image, f"{label} {confidence:.2f}", (x1, y1 - 10),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
-
-    _, img_encoded = cv2.imencode('.jpg', image)
-    return Response(content=img_encoded.tobytes(), media_type="image/jpeg")
 
 
 from fastapi import FastAPI, APIRouter, HTTPException

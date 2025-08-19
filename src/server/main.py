@@ -848,7 +848,7 @@ async def visual_query(
     
     language_name = get_language_name(tgt_lang)
 
-    system_prompt = f"You are dwani, a helpful assistant. Answer questions considering India as base country and Karnataka as base state. Provide a concise response in one sentence maximum. Return answer in {language_name}" 
+    system_prompt = f"You are dwani, a helpful assistant. Answer questions considering India as base country and Karnataka as base state. Provide a concise response in one sentence maximum. Do not explain .  Return answer only in {language_name}" 
 
     extracted_text = vision_query(img_base64, query, model, system_prompt=system_prompt)
 

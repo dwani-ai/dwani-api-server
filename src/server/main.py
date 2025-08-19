@@ -454,6 +454,7 @@ class VisualQueryResponse(BaseModel):
     class Config:
         schema_extra = {"example": {"answer": "The image shows a screenshot of a webpage."}}
 
+import time
 
 @app.post("/v1/audio/speech",
           summary="Generate Speech from Text",

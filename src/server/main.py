@@ -1624,10 +1624,23 @@ async def render_pdf_to_png(pdf_file):
     return images
 
 
-import re 
+import re
+
 def sanitize_json_string(s: str) -> str:
-    """Remove or escape invalid control characters from a string."""
-    return re.sub(r'[\x00-\x1F\x7F]', lambda m: '\\u{:04x}'.format(ord(m.group())), s)
+    """Sanitize a string to ensure it is valid for JSON parsing."""
+    if not s:
+        return "{}"  # Return empty JSON object if input is empty
+    # Replace control characters with escaped Unicode
+    s = re.sub(r'[\x00-\x1F\x7F]', lambda m: '\\u{:04x}'.format(ord(m.group())), s)
+    # Remove newlines/tabs outside of string values (before/after braces, brackets, etc.)
+    s = re.sub(r'[\n\t]+(?=[\{\[\]\},:0-9])', ' ', s)
+    # Remove trailing commas before closing braces/brackets
+    s = re.sub(r',\s*([\]\}])', r'\1', s)
+    # Ensure the string starts with a valid JSON structure
+    s = s.strip()
+    if not s.startswith('{') and not s.startswith('['):
+        s = '{' + s + '}'
+    return s
 
 async def extract_text_batch_from_pdf(
     file: UploadFile = File(...),
@@ -1646,9 +1659,10 @@ async def extract_text_batch_from_pdf(
             "text": (
                 f"Extract plain text from these {num_pages} PDF pages. "
                 "Return the results as a valid JSON object where keys are page numbers (starting from 0) "
-                "and values are the extracted text for each page. Ensure the response is strictly JSON-formatted, "
-                "with no markdown, code blocks, or additional text outside the JSON object. "
-                "Escape all special characters (e.g., newlines, tabs) properly in the JSON."
+                "and values are the extracted text for each page. "
+                "Ensure the response is strictly JSON-formatted with no markdown, code blocks, or additional text outside the JSON object. "
+                "Escape all special characters (e.g., newlines, tabs) properly within JSON string values to ensure valid JSON parsing. "
+                "Example: {\"0\": \"Page text\\nwith newlines escaped\", \"1\": \"Another page\"}"
             )
         })
 
@@ -1658,18 +1672,19 @@ async def extract_text_batch_from_pdf(
                 model=model,
                 messages=[{"role": "user", "content": messages}],
                 temperature=0.2,
-                max_tokens=50000
+                max_tokens=100000  # Increased to handle large PDFs
             )
             
             raw_response = response.choices[0].message.content
-            logger.debug("Raw response: %s", raw_response)
+            logger.debug("Raw OCR response length: %d, content: %s", len(raw_response), raw_response[:500])
             
             # Clean markdown code blocks
             cleaned_response = re.sub(r'^```(?:json)?\n|\n```$', '', raw_response, flags=re.MULTILINE).strip()
-            logger.debug("Cleaned response: %s", cleaned_response)
+            logger.debug("Cleaned response before sanitization: %s", cleaned_response[:500])
             
             # Sanitize the response
             cleaned_response = sanitize_json_string(cleaned_response)
+            logger.debug("Sanitized response: %s", cleaned_response[:500])
             
             try:
                 page_contents = json.loads(cleaned_response)
@@ -1677,24 +1692,31 @@ async def extract_text_batch_from_pdf(
                 if not isinstance(page_contents, dict):
                     raise ValueError("Response is not a valid JSON object with page numbers as keys")
             except json.JSONDecodeError as e:
-                raise HTTPException(
-                    status_code=500,
-                    detail=f"Failed to parse OCR response as JSON: {str(e)}. Raw response: {cleaned_response[:500]}"
-                )
+                logger.error("JSON parsing failed: %s. Attempting fallback parsing.", str(e))
+                # Fallback: Try to parse up to the last valid JSON object
+                try:
+                    cleaned_response = cleaned_response[:cleaned_response.rfind('}')+1]
+                    page_contents = json.loads(cleaned_response)
+                    logger.debug("Fallback parsing succeeded: %s", page_contents)
+                except json.JSONDecodeError:
+                    raise HTTPException(
+                        status_code=500,
+                        detail=f"Failed to parse OCR response as JSON after fallback: {str(e)}. Raw response: {cleaned_response[:500]}"
+                    )
 
             return JSONResponse(content={"page_contents": page_contents})
 
         except Exception as e:
+            logger.error("OCR batch processing failed: %s", str(e))
             raise HTTPException(status_code=500, detail=f"OCR batch processing failed: {str(e)}")
 
     except Exception as e:
+        logger.error("Error in extract_text_batch_from_pdf: %s", str(e))
         raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
     finally:
         if temp_file_path and os.path.exists(temp_file_path):
             os.remove(temp_file_path)
 
-            
-# Indic Summarize PDF Endpoint (Updated)
 @app.post("/v1/indic-summarize-pdf-all",
           response_model=IndicSummarizeAllPDFResponse,
           summary="Summarize and Translate a Specific Page of a PDF",
@@ -1709,23 +1731,28 @@ async def extract_text_batch_from_pdf(
 async def indic_summarize_pdf_all(
     request: Request,
     file: UploadFile = File(..., description="PDF file to summarize"),
-    tgt_lang: str = Form("kan_Knda", description="Target language code (e.g., kan_Knda)"),  # Default added
-    model: str = Form(default="gemma3", description="LLM model", enum=SUPPORTED_MODELS)
+    tgt_lang: str = Form("kan_Knda", description="Target language code (e.g., kan_Knda)"),
+    model: str = Form(default="gemma3", description="LLM model", enum=["gemma3"])  # Adjust SUPPORTED_MODELS as needed
 ):
-    logger.debug(f"Processing indic summarize PDF: model={model}, tgt_lang={tgt_lang} and file={file.filename}")
+    logger.debug(f"Processing indic summarize PDF: model={model}, tgt_lang={tgt_lang}, file={file.filename}")
 
     try:
         if not file.filename.lower().endswith('.pdf'):
             raise HTTPException(status_code=400, detail="File must be a PDF")
 
-        # Validate inputs
+        # Validate inputs (assuming validate_model and validate_language are defined)
         validate_model(model)
         validate_language(tgt_lang, "target language")
 
         text_response = await extract_text_batch_from_pdf(file, model)
 
-        page_contents_dict = json.loads(text_response.body.decode())["page_contents"]
-        
+        # Parse JSON response
+        try:
+            page_contents_dict = json.loads(text_response.body.decode())["page_contents"]
+        except (json.JSONDecodeError, KeyError) as e:
+            logger.error("Failed to parse text_response: %s", str(e))
+            raise HTTPException(status_code=500, detail="Invalid OCR response format")
+
         if not page_contents_dict:
             raise HTTPException(status_code=500, detail="No text extracted from PDF pages")
 
@@ -1735,19 +1762,20 @@ async def indic_summarize_pdf_all(
         if not text_response_string.strip():
             raise HTTPException(status_code=500, detail="Extracted text is empty")
 
-
         client = get_openai_client(model)
 
-        system_prompt = f"return the answer only in {tgt_lang} language"
+        system_prompt = f"Return the answer only in {tgt_lang} language"
         summary_response = client.chat.completions.create(
             model=model,
             messages=[
                 {
-                        "role": "system",
-                        "content": [{"type": "text", "text": system_prompt }]
-                    
+                    "role": "system",
+                    "content": [{"type": "text", "text": system_prompt}]
                 },
-                {"role": "user", "content": f"Summarize the following text in 3-5 sentences :\n\n{text_response_string}"}
+                {
+                    "role": "user",
+                    "content": f"Summarize the following text in 3-5 sentences:\n\n{text_response_string}"
+                }
             ],
             temperature=0.3,
             max_tokens=500
@@ -1757,17 +1785,16 @@ async def indic_summarize_pdf_all(
         if not summary:
             raise HTTPException(status_code=500, detail="Summary generation failed")
 
-        
         return JSONResponse(content={
-                "original_text": text_response_string,
-                "summary": summary,
-                "translated_summary": summary,
+            "original_text": text_response_string,
+            "summary": summary,
+            "translated_summary": summary,  # Translation logic can be added here if needed
         })
-    except Exception :
-        logger.error("External indic custom prompt PDF API timed out")
+    except Exception as e:
+        logger.error("External indic custom prompt PDF API error: %s", str(e))
         raise HTTPException(status_code=500, detail=f"External API error: {str(e)}")
-
-
+    
+    
 # Custom Prompt PDF Endpoint
 @app.post("/v1/custom-prompt-pdf",
           response_model=CustomPromptPDFResponse,

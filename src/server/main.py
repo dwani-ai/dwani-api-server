@@ -1578,13 +1578,31 @@ async def indic_summarize_pdf(
         logger.error(f"Invalid JSON response from external API: {str(e)}")
         raise HTTPException(status_code=500, detail="Invalid response format from external API")
 
-
-import pdfplumber
-
-def render_pdf_to_base64png(file):
-    pass
-
 from pdf2image import convert_from_path
+
+def encode_image(image: BytesIO) -> str:
+    """Encode image bytes to base64 string."""
+    return base64.b64encode(image.read()).decode("utf-8")
+
+def get_base64_msg_from_pdf(file):
+    images = render_pdf_to_png(file)
+
+    messages = []
+    for i, image in enumerate(images):
+        try:
+            image_bytes_io = BytesIO()
+            image.save(image_bytes_io, format='JPEG', quality=85)
+            image_bytes_io.seek(0)
+            image_base64 = base64.b64encode(image_bytes_io.read()).decode("utf-8")
+            messages.append({
+                "type": "image_url",
+                "image_url": {"url": f"data:image/jpeg;base64,{image_base64}"}
+            })
+        except Exception as e:
+            logger.error(f"Image processing failed for page {i}: {str(e)}")
+            continue
+    return messages
+    
 
 
 async def render_pdf_to_png(pdf_file):
@@ -1613,32 +1631,11 @@ async def extract_text_batch_from_pdf(
         if not file.filename.lower().endswith(".pdf"):
             raise HTTPException(status_code=400, detail="Only PDF files supported.")
         
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as temp_file:
-            temp_file.write(await file.read())
-            temp_file_path = temp_file.name
-
-        with pdfplumber.open(temp_file_path) as pdf:
-            num_pages = len(pdf.pages)
-
         messages = []
-        page_images = []
         
-        for page_number in range(num_pages):
-            try:
-                image_base64 = render_pdf_to_base64png(
-                    temp_file_path, 
-                    page_number, 
-                    target_longest_image_dim=1024
-                )
-                page_images.append(image_base64)
-                messages.append({
-                    "type": "image_url",
-                    "image_url": {"url": f"data:image/png;base64,{image_base64}"}
-                })
-            except Exception as e:
-                os.remove(temp_file_path)
-                raise HTTPException(status_code=500, detail=f"Failed to render PDF page {page_number}: {str(e)}")
+        messages = get_base64_msg_from_pdf(file)
 
+        num_pages = len(messages)
         messages.append({
             "type": "text",
             "text": (
@@ -1672,19 +1669,19 @@ async def extract_text_batch_from_pdf(
                 page_contents = json.loads(cleaned_response)
                 #print("Parsed page contents:", page_contents)
             except json.JSONDecodeError as e:
-                os.remove(temp_file_path)
+                #os.remove(temp_file_path)
                 raise HTTPException(status_code=500, detail=f"Failed to parse OCR response as JSON: {str(e)}")
 
-            os.remove(temp_file_path)
+            #os.remove(temp_file_path)
             return JSONResponse(content={"page_contents": page_contents})
 
         except Exception as e:
-            os.remove(temp_file_path)
+            #os.remove(temp_file_path)
             raise HTTPException(status_code=500, detail=f"OCR batch processing failed: {str(e)}")
 
     except Exception as e:
-        if 'temp_file_path' in locals():
-            os.remove(temp_file_path)
+        #if 'temp_file_path' in locals():
+        #    os.remove(temp_file_path)
         raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
 
 # Indic Summarize PDF Endpoint (Updated)
@@ -1728,135 +1725,33 @@ async def indic_summarize_pdf_all(
         raise HTTPException(status_code=500, detail="Extracted text is empty")
 
 
-    '''
-        try:
-        if not file.filename.lower().endswith(".pdf"):
-            raise HTTPException(status_code=400, detail="Only PDF files supported.")
+    client = get_openai_client(model)
 
-        text_response = await extract_text_batch_from_pdf(file, model)
+    system_prompt = f"return the answer only in {tgt_lang} language"
+    summary_response = client.chat.completions.create(
+        model=model,
+        messages=[
+            {
+                    "role": "system",
+                    "content": [{"type": "text", "text": system_prompt }]
+                
+            },
+            {"role": "user", "content": f"Summarize the following text in 3-5 sentences :\n\n{text_response_string}"}
+        ],
+        temperature=0.3,
+        max_tokens=500
+    )
+    summary = summary_response.choices[0].message.content
+    
+    if not summary:
+        raise HTTPException(status_code=500, detail="Summary generation failed")
 
-        page_contents_dict = json.loads(text_response.body.decode())["page_contents"]
-        
-        if not page_contents_dict:
-            raise HTTPException(status_code=500, detail="No text extracted from PDF pages")
-
-        # Convert dictionary values to a single string
-        text_response_string = "\n".join(str(value) for value in page_contents_dict.values() if value)
-        
-        if not text_response_string.strip():
-            raise HTTPException(status_code=500, detail="Extracted text is empty")
-
-        client = get_openai_client(model)
-        summary_response = client.chat.completions.create(
-            model=model,
-            messages=[
-                {"role": "user", "content": f"Summarize the following text in 3-5 sentences in English:\n\n{text_response_string}"}
-            ],
-            temperature=0.3,
-            max_tokens=500
-        )
-        summary = summary_response.choices[0].message.content
-        
-        if not summary:
-            raise HTTPException(status_code=500, detail="Summary generation failed")
-
-        if tgt_lang in ["eng_Latn", "deu_Latn"]:
-            return JSONResponse(content={
-                "original_text": text_response_string,
-                "summary": summary,
-                "translated_summary": summary,
-            })
-
-        sentences = split_into_sentences(summary)
-        if not sentences:
-            raise HTTPException(status_code=500, detail="No sentences found in summary for translation")
-
-        translation_payload = {
-            "sentences": sentences,
-            "src_lang" : "eng_Latn",
-            "tgt_lang": tgt_lang
-        }
-        try:
-            translation_response = requests.post(
-                f"{translation_api_url}/translate?src_lang=eng_Latn&tgt_lang={tgt_lang}",
-                json=translation_payload,
-                headers={"accept": "application/json", "Content-Type": "application/json"}
-            )
-            translation_response.raise_for_status()
-            translation_result = translation_response.json()
-        except requests.exceptions.RequestException as e:
-            raise HTTPException(status_code=500, detail=f"Translation API failed: {str(e)}")
-
-        translated_summary = " ".join(translation_result.get("translations", []))
-        if not translated_summary:
-            raise HTTPException(status_code=500, detail="Translation API returned empty translations")
-
-        return JSONResponse(content={
+    
+    return JSONResponse(content={
             "original_text": text_response_string,
             "summary": summary,
-            "translated_summary": translated_summary,
-        })
-
-    '''
-
-    logger.debug("Processing Indic PDF summary request", extra={
-        "endpoint": "/v1/indic-summarize-pdf-all",
-        "file_name": file.filename,
-        "tgt_lang": tgt_lang,
-        "model": model,
-        "client_ip": request.client.host
+            "translated_summary": summary,
     })
-
-    external_url = f"{os.getenv('DWANI_API_BASE_URL_PDF')}/indic-summarize-pdf-all"
-    start_time = time.time()
-
-    try:
-        file_content = await file.read()
-        files = {"file": (file.filename, file_content, "application/pdf")}
-        data = {
-            "tgt_lang": tgt_lang,
-            "model": model
-        }
-
-        response = requests.post(
-            external_url,
-            files=files,
-            data=data,
-            headers={"accept": "application/json"},
-            timeout=30
-        )
-        response.raise_for_status()
-
-        response_data = response.json()
-        original_text = response_data.get("original_text", "")
-        summary = response_data.get("summary", "")
-        translated_summary = response_data.get("translated_summary", "")
-
-        if not original_text or not summary or not translated_summary:
-            logger.debug(f"Incomplete response from external API: original_text={'present' if original_text else 'missing'}, summary={'present' if summary else 'missing'}, translated_summary={'present' if translated_summary else 'missing'}")
-            return IndicSummarizeAllPDFResponse(
-                original_text=original_text or "No text extracted",
-                summary=summary or "No summary provided",
-                translated_summary=translated_summary or "No translated summary provided",
-            )
-
-        logger.debug(f"Indic PDF summary completed in {time.time() - start_time:.2f} seconds")
-        return IndicSummarizeAllPDFResponse(
-            original_text=original_text,
-            summary=summary,
-            translated_summary=translated_summary,
-        )
-
-    except requests.Timeout:
-        logger.error("External Indic PDF summary API timed out")
-        raise HTTPException(status_code=504, detail="External API timeout")
-    except requests.RequestException as e:
-        logger.error(f"External Indic PDF summary API error: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"External API error: {str(e)}")
-    except ValueError as e:
-        logger.error(f"Invalid JSON response from external API: {str(e)}")
-        raise HTTPException(status_code=500, detail="Invalid response format from external API")
-
 
 
 # Custom Prompt PDF Endpoint

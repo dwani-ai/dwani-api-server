@@ -1,5 +1,9 @@
 dwani.ai - API Management Server
 
+
+sudo docker compose -f new_compose.yml up -d
+
+
 docker build -t dwani/api-server:latest -f Dockerfile .
 
 docker push dwani/api-server:latest

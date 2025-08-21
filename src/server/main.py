@@ -1624,27 +1624,31 @@ async def render_pdf_to_png(pdf_file):
     return images
 
 
+import re 
+def sanitize_json_string(s: str) -> str:
+    """Remove or escape invalid control characters from a string."""
+    return re.sub(r'[\x00-\x1F\x7F]', lambda m: '\\u{:04x}'.format(ord(m.group())), s)
+
 async def extract_text_batch_from_pdf(
     file: UploadFile = File(...),
     model: str = Body("gemma3", embed=True)
 ) -> JSONResponse:
     """Extract text from all PDF pages in a single batch request."""
+    temp_file_path = None
     try:
         if not file.filename.lower().endswith(".pdf"):
             raise HTTPException(status_code=400, detail="Only PDF files supported.")
         
-        messages = []
-        
         messages = await get_base64_msg_from_pdf(file)
-
         num_pages = len(messages)
         messages.append({
             "type": "text",
             "text": (
                 f"Extract plain text from these {num_pages} PDF pages. "
                 "Return the results as a valid JSON object where keys are page numbers (starting from 0) "
-                "and values are the extracted text for each page. Ensure the response is strictly JSON-formatted "
-                "and does not include markdown code blocks or any text outside the JSON object."
+                "and values are the extracted text for each page. Ensure the response is strictly JSON-formatted, "
+                "with no markdown, code blocks, or additional text outside the JSON object. "
+                "Escape all special characters (e.g., newlines, tabs) properly in the JSON."
             )
         })
 
@@ -1658,34 +1662,38 @@ async def extract_text_batch_from_pdf(
             )
             
             raw_response = response.choices[0].message.content
-            #print("Raw response:", raw_response)  # Debugging
+            logger.debug("Raw response: %s", raw_response)
             
             # Clean markdown code blocks
-            cleaned_response = raw_response
-            if raw_response.startswith("```json") and raw_response.endswith("```"):
-                cleaned_response = raw_response[7:-3].strip()
-            elif raw_response.startswith("```") and raw_response.endswith("```"):
-                cleaned_response = raw_response[3:-3].strip()
+            cleaned_response = re.sub(r'^```(?:json)?\n|\n```$', '', raw_response, flags=re.MULTILINE).strip()
+            logger.debug("Cleaned response: %s", cleaned_response)
+            
+            # Sanitize the response
+            cleaned_response = sanitize_json_string(cleaned_response)
             
             try:
                 page_contents = json.loads(cleaned_response)
-                #print("Parsed page contents:", page_contents)
+                logger.debug("Parsed page contents: %s", page_contents)
+                if not isinstance(page_contents, dict):
+                    raise ValueError("Response is not a valid JSON object with page numbers as keys")
             except json.JSONDecodeError as e:
-                #os.remove(temp_file_path)
-                raise HTTPException(status_code=500, detail=f"Failed to parse OCR response as JSON: {str(e)}")
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Failed to parse OCR response as JSON: {str(e)}. Raw response: {cleaned_response[:500]}"
+                )
 
-            #os.remove(temp_file_path)
             return JSONResponse(content={"page_contents": page_contents})
 
         except Exception as e:
-            #os.remove(temp_file_path)
             raise HTTPException(status_code=500, detail=f"OCR batch processing failed: {str(e)}")
 
     except Exception as e:
-        #if 'temp_file_path' in locals():
-        #    os.remove(temp_file_path)
         raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
+    finally:
+        if temp_file_path and os.path.exists(temp_file_path):
+            os.remove(temp_file_path)
 
+            
 # Indic Summarize PDF Endpoint (Updated)
 @app.post("/v1/indic-summarize-pdf-all",
           response_model=IndicSummarizeAllPDFResponse,

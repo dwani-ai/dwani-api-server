@@ -1586,8 +1586,8 @@ def encode_image(image: BytesIO) -> str:
     """Encode image bytes to base64 string."""
     return base64.b64encode(image.read()).decode("utf-8")
 
-def get_base64_msg_from_pdf(file):
-    images = render_pdf_to_png(file)
+async def get_base64_msg_from_pdf(file):
+    images = await render_pdf_to_png(file)
 
     messages = []
     for i, image in enumerate(images):
@@ -1635,7 +1635,7 @@ async def extract_text_batch_from_pdf(
         
         messages = []
         
-        messages = get_base64_msg_from_pdf(file)
+        messages = await get_base64_msg_from_pdf(file)
 
         num_pages = len(messages)
         messages.append({

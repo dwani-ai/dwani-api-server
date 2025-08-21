@@ -1706,54 +1706,58 @@ async def indic_summarize_pdf_all(
 ):
     logger.debug(f"Processing indic summarize PDF: model={model}, tgt_lang={tgt_lang} and file={file.filename}")
 
-    if not file.filename.lower().endswith('.pdf'):
-        raise HTTPException(status_code=400, detail="File must be a PDF")
+    try:
+        if not file.filename.lower().endswith('.pdf'):
+            raise HTTPException(status_code=400, detail="File must be a PDF")
 
-    # Validate inputs
-    validate_model(model)
-    validate_language(tgt_lang, "target language")
+        # Validate inputs
+        validate_model(model)
+        validate_language(tgt_lang, "target language")
 
-    text_response = await extract_text_batch_from_pdf(file, model)
+        text_response = await extract_text_batch_from_pdf(file, model)
 
-    page_contents_dict = json.loads(text_response.body.decode())["page_contents"]
-    
-    if not page_contents_dict:
-        raise HTTPException(status_code=500, detail="No text extracted from PDF pages")
+        page_contents_dict = json.loads(text_response.body.decode())["page_contents"]
+        
+        if not page_contents_dict:
+            raise HTTPException(status_code=500, detail="No text extracted from PDF pages")
 
-    # Convert dictionary values to a single string
-    text_response_string = "\n".join(str(value) for value in page_contents_dict.values() if value)
-    
-    if not text_response_string.strip():
-        raise HTTPException(status_code=500, detail="Extracted text is empty")
+        # Convert dictionary values to a single string
+        text_response_string = "\n".join(str(value) for value in page_contents_dict.values() if value)
+        
+        if not text_response_string.strip():
+            raise HTTPException(status_code=500, detail="Extracted text is empty")
 
 
-    client = get_openai_client(model)
+        client = get_openai_client(model)
 
-    system_prompt = f"return the answer only in {tgt_lang} language"
-    summary_response = client.chat.completions.create(
-        model=model,
-        messages=[
-            {
-                    "role": "system",
-                    "content": [{"type": "text", "text": system_prompt }]
-                
-            },
-            {"role": "user", "content": f"Summarize the following text in 3-5 sentences :\n\n{text_response_string}"}
-        ],
-        temperature=0.3,
-        max_tokens=500
-    )
-    summary = summary_response.choices[0].message.content
-    
-    if not summary:
-        raise HTTPException(status_code=500, detail="Summary generation failed")
+        system_prompt = f"return the answer only in {tgt_lang} language"
+        summary_response = client.chat.completions.create(
+            model=model,
+            messages=[
+                {
+                        "role": "system",
+                        "content": [{"type": "text", "text": system_prompt }]
+                    
+                },
+                {"role": "user", "content": f"Summarize the following text in 3-5 sentences :\n\n{text_response_string}"}
+            ],
+            temperature=0.3,
+            max_tokens=500
+        )
+        summary = summary_response.choices[0].message.content
+        
+        if not summary:
+            raise HTTPException(status_code=500, detail="Summary generation failed")
 
-    
-    return JSONResponse(content={
-            "original_text": text_response_string,
-            "summary": summary,
-            "translated_summary": summary,
-    })
+        
+        return JSONResponse(content={
+                "original_text": text_response_string,
+                "summary": summary,
+                "translated_summary": summary,
+        })
+    except Exception :
+        logger.error("External indic custom prompt PDF API timed out")
+        raise HTTPException(status_code=500, detail=f"External API error: {str(e)}")
 
 
 # Custom Prompt PDF Endpoint

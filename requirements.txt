@@ -25,3 +25,5 @@ ultralytics
 fastapi
 uvicorn
 python-multipart
+
+pdf2image

@@ -1579,6 +1579,8 @@ async def indic_summarize_pdf(
         raise HTTPException(status_code=500, detail="Invalid response format from external API")
 
 from pdf2image import convert_from_path
+from io import BytesIO
+
 
 def encode_image(image: BytesIO) -> str:
     """Encode image bytes to base64 string."""

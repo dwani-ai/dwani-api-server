@@ -1672,7 +1672,7 @@ async def extract_text_batch_from_pdf(
                 model=model,
                 messages=[{"role": "user", "content": messages}],
                 temperature=0.2,
-                max_tokens=100000  # Increased to handle large PDFs
+                max_tokens=50000  # Increased to handle large PDFs
             )
             
             raw_response = response.choices[0].message.content
@@ -1794,7 +1794,7 @@ async def indic_summarize_pdf_all(
         logger.error("External indic custom prompt PDF API error: %s", str(e))
         raise HTTPException(status_code=500, detail=f"External API error: {str(e)}")
     
-    
+
 # Custom Prompt PDF Endpoint
 @app.post("/v1/custom-prompt-pdf",
           response_model=CustomPromptPDFResponse,

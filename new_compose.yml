@@ -3,7 +3,7 @@ services:
     image: dwani/api-server-arm64:latest  # Replace with your FastAPI Docker image
     container_name: fastapi_server
     ports:
-      - "8000:8000"  # Expose FastAPI server port (adjust if needed)
+      - "80:80"  # Expose FastAPI server port (adjust if needed)
     environment:
       - HF_TOKEN=hf_this_is_a_valid_token_for_not_google
       - API_KEY_SECRET=dwani-very-secret-key-please-dont-tell-anyone

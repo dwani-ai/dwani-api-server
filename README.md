@@ -1,10 +1,28 @@
 dwani.ai - API Management Server
 
+
+sudo apt-get install poppler-utils -y
+
+python -m venv venv
+source venv/bin/activate
+
+
+pip install -r requirements.txt
+
+
+uvicorn src.server.main:app --host 0.0.0.0 --port 18888 
+
+<!-- 
+sudo docker compose -f new_compose.yml up -d
+
+
 docker build -t dwani/api-server:latest -f Dockerfile .
 
 docker push dwani/api-server:latest
 
 docker run  --env-file .env -p 80:80 dwani/api-server:latest
+-->
+
 <!-- 
 
 DOCKER_BUILDKIT=1 docker build -t slabstech/dwani-api-server .

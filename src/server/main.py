@@ -2069,7 +2069,7 @@ async def indic_custom_prompt_pdf_all(
 
     validate_language(tgt_lang, "target language")
 
-    text_response = await extract_text_batch_from_pdf(file, model)
+    text_response = await extract_text_from_pdf(file, model)
 
     # Parse JSON response
     try:

@@ -1730,19 +1730,28 @@ async def extract_text_from_pdf(file: UploadFile = File(...), model: str = Body(
 
         client = get_openai_client(model)
         
+        ocr_query_string
         for page_num, base64_image in enumerate(pages):
             try:
+
                 response = await client.chat.completions.create(
-                    model=model,
-                    messages=[
-                        {"role": "user", "content": [
-                            {"type": "image", "image": base64_image},
-                            {"type": "text", "text": "Extract plain text from this PDF page."}
-                        ]}
-                    ],
-                    temperature=0.2,
-                    max_tokens=4000
+                model=model,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "image_url",
+                                "image_url": {"url": f"data:image/png;base64,{base64_image}"}
+                            },
+                            {"type": "text", "text": ocr_query_string}
+                        ]
+                    }
+                ],
+                temperature=0.2,
+                max_tokens=4096
                 )
+            
                 
                 text = response.choices[0].message.content
                 # Escape special characters for JSON

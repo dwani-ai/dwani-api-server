@@ -1760,9 +1760,9 @@ async def extract_text_from_pdf(file: UploadFile = File(...), model: str = Body(
                 else:
                     page_contents[str(page_num)] = text
                 
-            except openai.OpenAIError as e:
-                logger.error(f"OpenAI API error for page {page_num}: {str(e)}")
-                page_contents[str(page_num)] = ""
+            #except openai.OpenAIError as e:
+            #    logger.error(f"OpenAI API error for page {page_num}: {str(e)}")
+            #    page_contents[str(page_num)] = ""
             except Exception as e:
                 logger.error(f"Unexpected error processing page {page_num}: {str(e)}")
                 page_contents[str(page_num)] = ""

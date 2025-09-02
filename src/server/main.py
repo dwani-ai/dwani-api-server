@@ -1746,7 +1746,7 @@ async def extract_text_from_pdf(file: UploadFile = File(...), model: str = Body(
                 
                 text = response.choices[0].message.content
                 # Escape special characters for JSON
-                text = json.dumps(text)[1:-1]  # Remove outer quotes
+                #text = json.dumps(text)[1:-1]  # Remove outer quotes
                 page_contents[str(page_num)] = text
                 
             except Exception as e:
@@ -2071,6 +2071,7 @@ async def indic_custom_prompt_pdf_all(
 
     text_response = await extract_text_from_pdf(file, model)
 
+    print
     # Parse JSON response
     try:
         page_contents_dict = json.loads(text_response.body.decode())["page_contents"]

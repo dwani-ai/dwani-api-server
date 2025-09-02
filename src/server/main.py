@@ -1724,50 +1724,56 @@ async def extract_text_from_pdf(file: UploadFile = File(...), model: str = Body(
         if not file.filename.lower().endswith(".pdf"):
             raise HTTPException(status_code=400, detail="Only PDF files supported.")
 
+        validate_model(model)  # Validate model
+        ocr_query_string = "Return the plain text extracted from this image."
+
         # Read PDF and convert to base64 images
         pages = await get_base64_msg_from_pdf(file)
         page_contents = {}
 
         client = get_openai_client(model)
         
-        ocr_query_string
         for page_num, base64_image in enumerate(pages):
             try:
-
                 response = await client.chat.completions.create(
-                model=model,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "image_url",
-                                "image_url": {"url": f"data:image/png;base64,{base64_image}"}
-                            },
-                            {"type": "text", "text": ocr_query_string}
-                        ]
-                    }
-                ],
-                temperature=0.2,
-                max_tokens=4096
+                    model=model,
+                    messages=[
+                        {
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "image_url",
+                                    "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}
+                                },
+                                {"type": "text", "text": ocr_query_string}
+                            ]
+                        }
+                    ],
+                    temperature=0.2,
+                    max_tokens=4096
                 )
-            
                 
                 text = response.choices[0].message.content
-                # Escape special characters for JSON
-                #text = json.dumps(text)[1:-1]  # Remove outer quotes
-                page_contents[str(page_num)] = text
+                if not text.strip():
+                    logger.warning(f"No text extracted for page {page_num}")
+                    page_contents[str(page_num)] = ""
+                else:
+                    page_contents[str(page_num)] = text
                 
+            except openai.OpenAIError as e:
+                logger.error(f"OpenAI API error for page {page_num}: {str(e)}")
+                page_contents[str(page_num)] = ""
             except Exception as e:
-                logger.error(f"Error processing page {page_num}: {str(e)}")
-                page_contents[str(page_num)] = ""  # Store empty string for failed pages
+                logger.error(f"Unexpected error processing page {page_num}: {str(e)}")
+                page_contents[str(page_num)] = ""
 
         return JSONResponse(content={"page_contents": page_contents})
 
     except Exception as e:
         logger.error(f"Error in extract_text_from_pdf: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
-    
+    finally:
+        await file.close()    
 
 @app.post("/v1/indic-summarize-pdf-all",
           response_model=IndicSummarizeAllPDFResponse,

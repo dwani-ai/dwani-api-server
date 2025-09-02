@@ -2035,57 +2035,71 @@ async def indic_custom_prompt_pdf_all(
         logger.error("Failed to parse text_response: %s", str(e))
         raise HTTPException(status_code=500, detail="Invalid OCR response format")
 
+
     if not page_contents_dict:
         raise HTTPException(status_code=500, detail="No text extracted from PDF pages")
 
+    try:
     # Convert dictionary values to a single string
-    text_response_string = "\n".join(str(value) for value in page_contents_dict.values() if value)
+        text_response_string = "\n".join(str(value) for value in page_contents_dict.values() if value)
+        
+        if not text_response_string.strip():
+            raise HTTPException(status_code=500, detail="Extracted text is empty")
+
+        client = get_openai_client(model)
+
+        system_prompt = f"Return the answer only in {tgt_lang} language"
+        summary_response = client.chat.completions.create(
+            model=model,
+            messages=[
+                {
+                    "role": "system",
+                    "content": [{"type": "text", "text": system_prompt}]
+                },
+                {
+                    "role": "user",
+                    "content": f" {query_lang} :\n\n{text_response_string}"
+                }
+            ],
+            temperature=0.3,
+            max_tokens=500
+        )
+        summary = summary_response.choices[0].message.content
+        
+        if not summary:
+            raise HTTPException(status_code=500, detail="Summary generation failed")
+
     
-    if not text_response_string.strip():
-        raise HTTPException(status_code=500, detail="Extracted text is empty")
+        original_text= text_response_string
+        query_answer = summary
+        translated_query_answer = summary
+        if not original_text or not query_answer or not translated_query_answer:
+            logger.warning(f"Incomplete response from external API: original_text={'present' if original_text else 'missing'}, query_answer={'present' if query_answer else 'missing'}, translated_query_answer={'present' if translated_query_answer else 'missing'}")
+            return IndicCustomPromptPDFAllResponse(
+                original_text=original_text or "No text extracted",
+                query_answer=query_answer or "No response provided",
+                translated_query_answer=translated_query_answer or "No translated response provided",
+                )
 
-    client = get_openai_client(model)
-
-    system_prompt = f"Return the answer only in {tgt_lang} language"
-    summary_response = client.chat.completions.create(
-        model=model,
-        messages=[
-            {
-                "role": "system",
-                "content": [{"type": "text", "text": system_prompt}]
-            },
-            {
-                "role": "user",
-                "content": f" {query_lang} :\n\n{text_response_string}"
-            }
-        ],
-        temperature=0.3,
-        max_tokens=500
-    )
-    summary = summary_response.choices[0].message.content
-    
-    if not summary:
-        raise HTTPException(status_code=500, detail="Summary generation failed")
-
- 
-    original_text= text_response_string
-    query_answer = summary
-    translated_query_answer = summary
-    if not original_text or not query_answer or not translated_query_answer:
-        logger.warning(f"Incomplete response from external API: original_text={'present' if original_text else 'missing'}, query_answer={'present' if query_answer else 'missing'}, translated_query_answer={'present' if translated_query_answer else 'missing'}")
+        #logger.debug(f"Indic custom prompt PDF completed in {time.time() - start_time:.2f} seconds")
         return IndicCustomPromptPDFAllResponse(
-            original_text=original_text or "No text extracted",
-            query_answer=query_answer or "No response provided",
-            translated_query_answer=translated_query_answer or "No translated response provided",
-            )
+            original_text=original_text,
+            query_answer=query_answer,
+            translated_query_answer=translated_query_answer,
+        )
+    
+    except requests.Timeout:
+        logger.error("External indic custom prompt PDF API timed out")
+    raise HTTPException(status_code=504, detail="External API timeout")
 
-    logger.debug(f"Indic custom prompt PDF completed in {time.time() - start_time:.2f} seconds")
-    return IndicCustomPromptPDFAllResponse(
-        original_text=original_text,
-        query_answer=query_answer,
-        translated_query_answer=translated_query_answer,
-    )
- 
+'''
+    except requests.RequestException as e:
+        logger.error(f"External indic custom prompt PDF API error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"External API error: {str(e)}")
+    except ValueError as e:
+        logger.error(f"Invalid JSON response from external API: {str(e)}")
+        raise HTTPException(status_code=500, detail="Invalid response format from external API")
+'''
 
 @app.post("/v1/indic-custom-prompt-kannada-pdf",
           summary="Generate Kannada PDF with Custom Prompt",

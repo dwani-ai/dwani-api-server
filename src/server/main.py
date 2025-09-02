@@ -1717,6 +1717,49 @@ async def extract_text_batch_from_pdf(
         if temp_file_path and os.path.exists(temp_file_path):
             os.remove(temp_file_path)
 
+
+async def extract_text_from_pdf(file: UploadFile = File(...), model: str = Body("gemma3", embed=True)) -> JSONResponse:
+    """Extract text from all PDF pages one at a time."""
+    try:
+        if not file.filename.lower().endswith(".pdf"):
+            raise HTTPException(status_code=400, detail="Only PDF files supported.")
+
+        # Read PDF and convert to base64 images
+        pages = await get_base64_msg_from_pdf(file)
+        page_contents = {}
+
+        client = get_openai_client(model)
+        
+        for page_num, base64_image in enumerate(pages):
+            try:
+                response = await client.chat.completions.create(
+                    model=model,
+                    messages=[
+                        {"role": "user", "content": [
+                            {"type": "image", "image": base64_image},
+                            {"type": "text", "text": "Extract plain text from this PDF page."}
+                        ]}
+                    ],
+                    temperature=0.2,
+                    max_tokens=4000
+                )
+                
+                text = response.choices[0].message.content
+                # Escape special characters for JSON
+                text = json.dumps(text)[1:-1]  # Remove outer quotes
+                page_contents[str(page_num)] = text
+                
+            except Exception as e:
+                logger.error(f"Error processing page {page_num}: {str(e)}")
+                page_contents[str(page_num)] = ""  # Store empty string for failed pages
+
+        return JSONResponse(content={"page_contents": page_contents})
+
+    except Exception as e:
+        logger.error(f"Error in extract_text_from_pdf: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
+    
+
 @app.post("/v1/indic-summarize-pdf-all",
           response_model=IndicSummarizeAllPDFResponse,
           summary="Summarize and Translate a Specific Page of a PDF",
@@ -1744,7 +1787,7 @@ async def indic_summarize_pdf_all(
         validate_model(model)
         validate_language(tgt_lang, "target language")
 
-        text_response = await extract_text_batch_from_pdf(file, model)
+        text_response = await extract_text_from_pdf(file, model)
 
         # Parse JSON response
         try:

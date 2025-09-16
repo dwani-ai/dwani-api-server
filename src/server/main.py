@@ -27,7 +27,7 @@ from typing import Optional
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.responses import Response, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
-from ultralytics import YOLO
+#from ultralytics import YOLO
 import cv2
 import numpy as np
 
@@ -141,7 +141,7 @@ SUPPORTED_LANGUAGES = [
 
 
 
-model = YOLO("yolov8l.pt")  # example for large model with better accuracy
+#model = YOLO("yolov8l.pt")  # example for large model with better accuracy
 
 
 def read_imagefile(file) -> np.ndarray:
@@ -152,6 +152,7 @@ def read_imagefile(file) -> np.ndarray:
         raise HTTPException(status_code=400, detail="Invalid image")
     return image
 
+'''
 @app.post("/detect/")
 async def detect(
     image_file: UploadFile = File(...),
@@ -211,7 +212,7 @@ async def detect_image(
 
     _, img_encoded = cv2.imencode('.jpg', image)
     return Response(content=img_encoded.tobytes(), media_type="image/jpeg")
-
+'''
 
 # Pydantic models (updated to include model validation)
 class VisualQueryRequest(BaseModel):

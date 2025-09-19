@@ -1588,6 +1588,51 @@ def encode_image(image: BytesIO) -> str:
     return base64.b64encode(image.read()).decode("utf-8")
 
 async def get_base64_msg_from_pdf(file):
+    try:
+        images = await render_pdf_to_png(file)
+    except Exception as e:
+        logger.error(f"Failed to render PDF to PNG: {str(e)}")
+        return []
+
+    messages = []
+    for i, image in enumerate(images):
+        try:
+            # Ensure the image is in RGB mode (required for JPEG)
+            if image.mode != "RGB":
+                image = image.convert("RGB")
+            
+            # Save image to BytesIO as JPEG
+            image_bytes_io = BytesIO()
+            image.save(image_bytes_io, format="JPEG", quality=85)
+            image_bytes_io.seek(0)
+            
+            # Encode to base64
+            image_bytes = image_bytes_io.read()
+            image_base64 = base64.b64encode(image_bytes).decode("utf-8")
+            
+            # Validate base64 string
+            try:
+                base64.b64decode(image_base64, validate=True)
+            except Exception as e:
+                logger.error(f"Invalid base64 string for page {i}: {str(e)}")
+                continue
+            
+            # Create message (adjust based on vLLM's expected format)
+            messages.append({
+                "type": "image_url",
+                # Option 1: Include data URI (if vLLM supports it)
+                "image_url": {"url": f"data:image/jpeg;base64,{image_base64}"}
+                # Option 2: Raw base64 string (uncomment if vLLM expects this)
+                # "image_url": {"url": image_base64}
+            })
+        except Exception as e:
+            logger.error(f"Image processing failed for page {i}: {str(e)}")
+            continue
+    
+    return messages
+
+'''
+async def get_base64_msg_from_pdf(file):
     images = await render_pdf_to_png(file)
 
     messages = []
@@ -1606,7 +1651,7 @@ async def get_base64_msg_from_pdf(file):
             continue
     return messages
     
-
+'''
 
 async def render_pdf_to_png(pdf_file):
 

@@ -1871,7 +1871,7 @@ async def extract_text(pdf_file):
             max_tokens=2048
         )
         raw_response = response.choices[0].message.content
-        result = raw_response
+        result = result + " " + raw_response
     
     return result
 

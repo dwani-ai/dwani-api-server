@@ -1844,6 +1844,7 @@ async def extract_text(pdf_file):
     model="gemma3"
     client = get_async_openai_client(model)
     images = await render_pdf_to_png(pdf_file)
+    result = ""
     for image in images:
         image_bytes_io = BytesIO()
         image.save(image_bytes_io, format='JPEG', quality=85)
@@ -1870,8 +1871,9 @@ async def extract_text(pdf_file):
             max_tokens=2048
         )
         raw_response = response.choices[0].message.content
+        result = raw_response
     
-    return raw_response
+    return result
 
 
 import base64
@@ -1925,8 +1927,9 @@ async def indic_summarize_pdf_all(
         validate_language(tgt_lang, "target language")
 
         #text_response = await extract_text_from_pdf(file, model)
-        text_response = await extract_text(file)
+        text_response_string = await extract_text(file)
         # Parse JSON response
+        '''
         try:
             page_contents_dict = json.loads(text_response.body.decode())["page_contents"]
         except (json.JSONDecodeError, KeyError) as e:
@@ -1941,7 +1944,7 @@ async def indic_summarize_pdf_all(
         
         if not text_response_string.strip():
             raise HTTPException(status_code=500, detail="Extracted text is empty")
-
+'''
         client = get_openai_client(model)
 
         system_prompt = f"Return the answer only in {tgt_lang} language"

@@ -2105,10 +2105,12 @@ async def indic_custom_prompt_pdf(
         "client_ip": request.client.host
     })
 
-    external_url = f"{os.getenv('DWANI_API_BASE_URL_PDF')}/indic-custom-prompt-pdf"
+
+    #external_url = f"{os.getenv('DWANI_API_BASE_URL_PDF')}/indic-custom-prompt-pdf"
     start_time = time.time()
 
     try:
+        '''
         file_content = await file.read()
         files = {"file": (file.filename, file_content, "application/pdf")}
         data = {
@@ -2133,8 +2135,36 @@ async def indic_custom_prompt_pdf(
         original_text = response_data.get("original_text", "")
         query_answer = response_data.get("query_answer", "")
         translated_query_answer = response_data.get("translated_query_answer", "")
+        '''
 
-        processed_page = response_data.get("processed_page", page_number)
+        original_text = await extract_text(file)
+
+        if not original_text.strip():
+            raise HTTPException(status_code=500, detail="Extracted text is empty")
+
+        client = get_openai_client(model)
+
+        system_prompt = f"Return the answer only in {tgt_lang} language"
+        summary_response = client.chat.completions.create(
+            model=model,
+            messages=[
+                {
+                    "role": "system",
+                    "content": [{"type": "text", "text": system_prompt}]
+                },
+                {
+                    "role": "user",
+                    "content": f" {prompt} :\n\n{original_text}"
+                }
+            ],
+            temperature=0.3,
+            max_tokens=500
+        )
+        query_answer = summary_response.choices[0].message.content
+        translated_query_answer = query_answer
+        processed_page = query_answer
+
+        #processed_page = response_data.get("processed_page", page_number)
 
         if not original_text or not query_answer or not translated_query_answer:
             logger.warning(f"Incomplete response from external API: original_text={'present' if original_text else 'missing'}, query_answer={'present' if query_answer else 'missing'}, translated_query_answer={'present' if translated_query_answer else 'missing'}")

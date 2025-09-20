@@ -1840,7 +1840,7 @@ def get_async_openai_client(model: str) -> AsyncOpenAI:
     base_url = f"http://0.0.0.0:{model_ports[model]}/v1"
     return AsyncOpenAI(api_key="http", base_url=base_url)
 
-async def extract_text(pdf_file):
+async def extract_text_file(pdf_file):
     model="gemma3"
     client = get_async_openai_client(model)
     images = await render_pdf_to_png(pdf_file)
@@ -1874,6 +1874,43 @@ async def extract_text(pdf_file):
         result = result + " " + raw_response
     
     return result
+
+async def extract_text_page(pdf_file, page_number):
+    model="gemma3"
+    client = get_async_openai_client(model)
+    images = await render_pdf_to_png(pdf_file)
+    
+    image_index = page_number-1
+
+    image_parse = images[image_index]
+    image_bytes_io = BytesIO()
+    image_parse.save(image_bytes_io, format='JPEG', quality=85)
+    image_bytes_io.seek(0)
+    image_base64 = encode_image(image_bytes_io)
+    
+    single_message = [
+        {
+            "type": "image_url",
+            "image_url": {"url": f"data:image/jpeg;base64,{image_base64}"}
+        },
+        {
+            "type": "text",
+            "text": (
+                f"Extract plain text from this single PDF page "
+            )
+        }
+    ]
+    
+    response = await client.chat.completions.create(
+        model=model,
+        messages=[{"role": "user", "content": single_message}],
+        temperature=0.2,
+        max_tokens=2048
+    )
+    raw_response = response.choices[0].message.content
+    #result = result + " " + raw_response
+    
+    return raw_response
 
 
 import base64
@@ -1927,7 +1964,7 @@ async def indic_summarize_pdf_all(
         validate_language(tgt_lang, "target language")
 
         #text_response = await extract_text_from_pdf(file, model)
-        text_response_string = await extract_text(file)
+        text_response_string = await extract_text_file(file)
         # Parse JSON response
         '''
         try:
@@ -2137,7 +2174,8 @@ async def indic_custom_prompt_pdf(
         translated_query_answer = response_data.get("translated_query_answer", "")
         '''
 
-        original_text = await extract_text(file)
+        #original_text = await extract_text(file)
+        original_text = await extract_text_page(file, page_number)
 
         if not original_text.strip():
             raise HTTPException(status_code=500, detail="Extracted text is empty")
@@ -2239,7 +2277,7 @@ async def indic_custom_prompt_pdf_all(
 
     validate_language(tgt_lang, "target language")
 
-    text_response = await extract_text(file)
+    text_response = await extract_text_file(file)
 
     
     # Parse JSON response

@@ -2162,7 +2162,7 @@ async def indic_custom_prompt_pdf(
         )
         query_answer = summary_response.choices[0].message.content
         translated_query_answer = query_answer
-        processed_page = query_answer
+        processed_page = page_number
 
         #processed_page = response_data.get("processed_page", page_number)
 

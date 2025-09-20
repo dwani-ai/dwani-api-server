@@ -1843,7 +1843,7 @@ def get_openai_client(model: str) -> AsyncOpenAI:
 async def extract_text(pdf_file):
     model="gemma3"
     client = get_openai_client(model)
-    images = render_pdf_to_png(pdf_file)
+    images = await render_pdf_to_png(pdf_file)
     for image in images:
         image_bytes_io = BytesIO()
         image.save(image_bytes_io, format='JPEG', quality=85)

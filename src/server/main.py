@@ -1821,6 +1821,82 @@ async def extract_text_from_pdf(file: UploadFile = File(...), model: str = Body(
     finally:
         await file.close()    
 
+from openai import AsyncOpenAI
+
+def encode_image(image: BytesIO) -> str:
+    """Encode image bytes to base64 string."""
+    return base64.b64encode(image.read()).decode("utf-8")
+
+def get_openai_client(model: str) -> AsyncOpenAI:
+    """Initialize AsyncOpenAI client with model-specific base URL."""
+    valid_models = ["gemma3", "gpt-oss"]
+    if model not in valid_models:
+        raise ValueError(f"Invalid model: {model}. Choose from: {', '.join(valid_models)}")
+    
+    model_ports = {
+        "gemma3": "9000",
+        "gpt-oss": "9500",
+    }
+    base_url = f"http://0.0.0.0:{model_ports[model]}/v1"
+    return AsyncOpenAI(api_key="http", base_url=base_url)
+
+async def extract_text(pdf_file):
+    model="gemma3"
+    client = get_openai_client(model)
+    images = render_pdf_to_png(pdf_file)
+    for image in images:
+        image_bytes_io = BytesIO()
+        image.save(image_bytes_io, format='JPEG', quality=85)
+        image_bytes_io.seek(0)
+        image_base64 = encode_image(image_bytes_io)
+        
+        single_message = [
+            {
+                "type": "image_url",
+                "image_url": {"url": f"data:image/jpeg;base64,{image_base64}"}
+            },
+            {
+                "type": "text",
+                "text": (
+                    f"Extract plain text from this single PDF page "
+                )
+            }
+        ]
+        
+        response = await client.chat.completions.create(
+            model=model,
+            messages=[{"role": "user", "content": single_message}],
+            temperature=0.2,
+            max_tokens=2048
+        )
+        raw_response = response.choices[0].message.content
+    
+    return raw_response
+
+
+import base64
+from io import BytesIO
+from pdf2image import convert_from_path
+import os
+import asyncio
+import re
+
+async def render_pdf_to_png(pdf_file):
+    """Convert PDF to images."""
+    try:
+        with open("temp.pdf", "wb") as f:
+            f.write(await pdf_file.read())
+        images = convert_from_path("temp.pdf")
+    except Exception as e:
+        logger.error(f"PDF conversion failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to convert PDF to images: {str(e)}")
+    finally:
+        if os.path.exists("temp.pdf"):
+            os.remove("temp.pdf")
+
+    return images
+
+
 @app.post("/v1/indic-summarize-pdf-all",
           response_model=IndicSummarizeAllPDFResponse,
           summary="Summarize and Translate a Specific Page of a PDF",
@@ -1848,8 +1924,8 @@ async def indic_summarize_pdf_all(
         validate_model(model)
         validate_language(tgt_lang, "target language")
 
-        text_response = await extract_text_from_pdf(file, model)
-
+        #text_response = await extract_text_from_pdf(file, model)
+        text_response = await extract_text(file)
         # Parse JSON response
         try:
             page_contents_dict = json.loads(text_response.body.decode())["page_contents"]

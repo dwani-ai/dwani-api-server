@@ -1827,7 +1827,7 @@ def encode_image(image: BytesIO) -> str:
     """Encode image bytes to base64 string."""
     return base64.b64encode(image.read()).decode("utf-8")
 
-def get_openai_client(model: str) -> AsyncOpenAI:
+def get_async_openai_client(model: str) -> AsyncOpenAI:
     """Initialize AsyncOpenAI client with model-specific base URL."""
     valid_models = ["gemma3", "gpt-oss"]
     if model not in valid_models:
@@ -1842,7 +1842,7 @@ def get_openai_client(model: str) -> AsyncOpenAI:
 
 async def extract_text(pdf_file):
     model="gemma3"
-    client = get_openai_client(model)
+    client = get_async_openai_client(model)
     images = await render_pdf_to_png(pdf_file)
     for image in images:
         image_bytes_io = BytesIO()

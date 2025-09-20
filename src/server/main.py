@@ -2209,10 +2209,11 @@ async def indic_custom_prompt_pdf_all(
 
     validate_language(tgt_lang, "target language")
 
-    text_response = await extract_text_from_pdf(file, model)
+    text_response = await extract_text(file)
 
-    print
+    
     # Parse JSON response
+    '''
     try:
         page_contents_dict = json.loads(text_response.body.decode())["page_contents"]
     except (json.JSONDecodeError, KeyError) as e:
@@ -2222,10 +2223,11 @@ async def indic_custom_prompt_pdf_all(
 
     if not page_contents_dict:
         raise HTTPException(status_code=500, detail="No text extracted from PDF pages")
-
+    '''
     try:
     # Convert dictionary values to a single string
-        text_response_string = "\n".join(str(value) for value in page_contents_dict.values() if value)
+        text_response_string = text_response
+        #text_response_string = "\n".join(str(value) for value in page_contents_dict.values() if value)
         
         if not text_response_string.strip():
             raise HTTPException(status_code=500, detail="Extracted text is empty")

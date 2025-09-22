@@ -27,7 +27,7 @@ from typing import Optional
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.responses import Response, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
-from ultralytics import YOLO
+#from ultralytics import YOLO
 import cv2
 import numpy as np
 
@@ -141,7 +141,7 @@ SUPPORTED_LANGUAGES = [
 
 
 
-model = YOLO("yolov8l.pt")  # example for large model with better accuracy
+#model = YOLO("yolov8l.pt")  # example for large model with better accuracy
 
 
 def read_imagefile(file) -> np.ndarray:
@@ -152,6 +152,7 @@ def read_imagefile(file) -> np.ndarray:
         raise HTTPException(status_code=400, detail="Invalid image")
     return image
 
+'''
 @app.post("/detect/")
 async def detect(
     image_file: UploadFile = File(...),
@@ -211,7 +212,7 @@ async def detect_image(
 
     _, img_encoded = cv2.imencode('.jpg', image)
     return Response(content=img_encoded.tobytes(), media_type="image/jpeg")
-
+'''
 
 # Pydantic models (updated to include model validation)
 class VisualQueryRequest(BaseModel):
@@ -1587,6 +1588,51 @@ def encode_image(image: BytesIO) -> str:
     return base64.b64encode(image.read()).decode("utf-8")
 
 async def get_base64_msg_from_pdf(file):
+    try:
+        images = await render_pdf_to_png(file)
+    except Exception as e:
+        logger.error(f"Failed to render PDF to PNG: {str(e)}")
+        return []
+
+    messages = []
+    for i, image in enumerate(images):
+        try:
+            # Ensure the image is in RGB mode (required for JPEG)
+            if image.mode != "RGB":
+                image = image.convert("RGB")
+            
+            # Save image to BytesIO as JPEG
+            image_bytes_io = BytesIO()
+            image.save(image_bytes_io, format="JPEG", quality=85)
+            image_bytes_io.seek(0)
+            
+            # Encode to base64
+            image_bytes = image_bytes_io.read()
+            image_base64 = base64.b64encode(image_bytes).decode("utf-8")
+            
+            # Validate base64 string
+            try:
+                base64.b64decode(image_base64, validate=True)
+            except Exception as e:
+                logger.error(f"Invalid base64 string for page {i}: {str(e)}")
+                continue
+            
+            # Create message (adjust based on vLLM's expected format)
+            messages.append({
+                "type": "image_url",
+                # Option 1: Include data URI (if vLLM supports it)
+                "image_url": {"url": f"data:image/jpeg;base64,{image_base64}"}
+                # Option 2: Raw base64 string (uncomment if vLLM expects this)
+                # "image_url": {"url": image_base64}
+            })
+        except Exception as e:
+            logger.error(f"Image processing failed for page {i}: {str(e)}")
+            continue
+    
+    return messages
+
+'''
+async def get_base64_msg_from_pdf(file):
     images = await render_pdf_to_png(file)
 
     messages = []
@@ -1605,7 +1651,7 @@ async def get_base64_msg_from_pdf(file):
             continue
     return messages
     
-
+'''
 
 async def render_pdf_to_png(pdf_file):
 
@@ -1717,6 +1763,179 @@ async def extract_text_batch_from_pdf(
         if temp_file_path and os.path.exists(temp_file_path):
             os.remove(temp_file_path)
 
+
+async def extract_text_from_pdf(file: UploadFile = File(...), model: str = Body("gemma3", embed=True)) -> JSONResponse:
+    """Extract text from all PDF pages one at a time."""
+    try:
+        if not file.filename.lower().endswith(".pdf"):
+            raise HTTPException(status_code=400, detail="Only PDF files supported.")
+
+        validate_model(model)  # Validate model
+        ocr_query_string = "Return the plain text extracted from this image."
+
+        # Read PDF and convert to base64 images
+        pages = await get_base64_msg_from_pdf(file)
+        page_contents = {}
+
+        client = get_openai_client(model)
+        
+        for page_num, base64_image in enumerate(pages):
+            try:
+                response = await client.chat.completions.create(
+                    model=model,
+                    messages=[
+                        {
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "image_url",
+                                    "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}
+                                },
+                                {"type": "text", "text": ocr_query_string}
+                            ]
+                        }
+                    ],
+                    temperature=0.2,
+                    max_tokens=4096
+                )
+                
+                text = response.choices[0].message.content
+                if not text.strip():
+                    logger.warning(f"No text extracted for page {page_num}")
+                    page_contents[str(page_num)] = ""
+                else:
+                    page_contents[str(page_num)] = text
+                
+            #except openai.OpenAIError as e:
+            #    logger.error(f"OpenAI API error for page {page_num}: {str(e)}")
+            #    page_contents[str(page_num)] = ""
+            except Exception as e:
+                logger.error(f"Unexpected error processing page {page_num}: {str(e)}")
+                page_contents[str(page_num)] = ""
+
+        return JSONResponse(content={"page_contents": page_contents})
+
+    except Exception as e:
+        logger.error(f"Error in extract_text_from_pdf: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
+    finally:
+        await file.close()    
+
+from openai import AsyncOpenAI
+
+def encode_image(image: BytesIO) -> str:
+    """Encode image bytes to base64 string."""
+    return base64.b64encode(image.read()).decode("utf-8")
+
+def get_async_openai_client(model: str) -> AsyncOpenAI:
+    """Initialize AsyncOpenAI client with model-specific base URL."""
+    valid_models = ["gemma3", "gpt-oss"]
+    if model not in valid_models:
+        raise ValueError(f"Invalid model: {model}. Choose from: {', '.join(valid_models)}")
+    
+    model_ports = {
+        "gemma3": "9000",
+        "gpt-oss": "9500",
+    }
+    base_url = f"http://0.0.0.0:{model_ports[model]}/v1"
+    return AsyncOpenAI(api_key="http", base_url=base_url)
+
+async def extract_text_file(pdf_file):
+    model="gemma3"
+    client = get_async_openai_client(model)
+    images = await render_pdf_to_png(pdf_file)
+    result = ""
+    for image in images:
+        image_bytes_io = BytesIO()
+        image.save(image_bytes_io, format='JPEG', quality=85)
+        image_bytes_io.seek(0)
+        image_base64 = encode_image(image_bytes_io)
+        
+        single_message = [
+            {
+                "type": "image_url",
+                "image_url": {"url": f"data:image/jpeg;base64,{image_base64}"}
+            },
+            {
+                "type": "text",
+                "text": (
+                    f"Extract plain text from this single PDF page "
+                )
+            }
+        ]
+        
+        response = await client.chat.completions.create(
+            model=model,
+            messages=[{"role": "user", "content": single_message}],
+            temperature=0.2,
+            max_tokens=2048
+        )
+        raw_response = response.choices[0].message.content
+        result = result + " " + raw_response
+    
+    return result
+
+async def extract_text_page(pdf_file, page_number):
+    model="gemma3"
+    client = get_async_openai_client(model)
+    images = await render_pdf_to_png(pdf_file)
+    
+    image_index = page_number-1
+
+    image_parse = images[image_index]
+    image_bytes_io = BytesIO()
+    image_parse.save(image_bytes_io, format='JPEG', quality=85)
+    image_bytes_io.seek(0)
+    image_base64 = encode_image(image_bytes_io)
+    
+    single_message = [
+        {
+            "type": "image_url",
+            "image_url": {"url": f"data:image/jpeg;base64,{image_base64}"}
+        },
+        {
+            "type": "text",
+            "text": (
+                f"Extract plain text from this single PDF page "
+            )
+        }
+    ]
+    
+    response = await client.chat.completions.create(
+        model=model,
+        messages=[{"role": "user", "content": single_message}],
+        temperature=0.2,
+        max_tokens=2048
+    )
+    raw_response = response.choices[0].message.content
+    #result = result + " " + raw_response
+    
+    return raw_response
+
+
+import base64
+from io import BytesIO
+from pdf2image import convert_from_path
+import os
+import asyncio
+import re
+
+async def render_pdf_to_png(pdf_file):
+    """Convert PDF to images."""
+    try:
+        with open("temp.pdf", "wb") as f:
+            f.write(await pdf_file.read())
+        images = convert_from_path("temp.pdf")
+    except Exception as e:
+        logger.error(f"PDF conversion failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to convert PDF to images: {str(e)}")
+    finally:
+        if os.path.exists("temp.pdf"):
+            os.remove("temp.pdf")
+
+    return images
+
+
 @app.post("/v1/indic-summarize-pdf-all",
           response_model=IndicSummarizeAllPDFResponse,
           summary="Summarize and Translate a Specific Page of a PDF",
@@ -1744,9 +1963,10 @@ async def indic_summarize_pdf_all(
         validate_model(model)
         validate_language(tgt_lang, "target language")
 
-        text_response = await extract_text_batch_from_pdf(file, model)
-
+        #text_response = await extract_text_from_pdf(file, model)
+        text_response_string = await extract_text_file(file)
         # Parse JSON response
+        '''
         try:
             page_contents_dict = json.loads(text_response.body.decode())["page_contents"]
         except (json.JSONDecodeError, KeyError) as e:
@@ -1761,7 +1981,7 @@ async def indic_summarize_pdf_all(
         
         if not text_response_string.strip():
             raise HTTPException(status_code=500, detail="Extracted text is empty")
-
+'''
         client = get_openai_client(model)
 
         system_prompt = f"Return the answer only in {tgt_lang} language"
@@ -1922,10 +2142,12 @@ async def indic_custom_prompt_pdf(
         "client_ip": request.client.host
     })
 
-    external_url = f"{os.getenv('DWANI_API_BASE_URL_PDF')}/indic-custom-prompt-pdf"
+
+    #external_url = f"{os.getenv('DWANI_API_BASE_URL_PDF')}/indic-custom-prompt-pdf"
     start_time = time.time()
 
     try:
+        '''
         file_content = await file.read()
         files = {"file": (file.filename, file_content, "application/pdf")}
         data = {
@@ -1950,8 +2172,37 @@ async def indic_custom_prompt_pdf(
         original_text = response_data.get("original_text", "")
         query_answer = response_data.get("query_answer", "")
         translated_query_answer = response_data.get("translated_query_answer", "")
+        '''
 
-        processed_page = response_data.get("processed_page", page_number)
+        #original_text = await extract_text(file)
+        original_text = await extract_text_page(file, page_number)
+
+        if not original_text.strip():
+            raise HTTPException(status_code=500, detail="Extracted text is empty")
+
+        client = get_openai_client(model)
+
+        system_prompt = f"Return the answer only in {tgt_lang} language"
+        summary_response = client.chat.completions.create(
+            model=model,
+            messages=[
+                {
+                    "role": "system",
+                    "content": [{"type": "text", "text": system_prompt}]
+                },
+                {
+                    "role": "user",
+                    "content": f" {prompt} :\n\n{original_text}"
+                }
+            ],
+            temperature=0.3,
+            max_tokens=500
+        )
+        query_answer = summary_response.choices[0].message.content
+        translated_query_answer = query_answer
+        processed_page = page_number
+
+        #processed_page = response_data.get("processed_page", page_number)
 
         if not original_text or not query_answer or not translated_query_answer:
             logger.warning(f"Incomplete response from external API: original_text={'present' if original_text else 'missing'}, query_answer={'present' if query_answer else 'missing'}, translated_query_answer={'present' if translated_query_answer else 'missing'}")
@@ -2023,33 +2274,59 @@ async def indic_custom_prompt_pdf_all(
         "client_ip": request.client.host
     })
 
-    external_url = f"{os.getenv('DWANI_API_BASE_URL_PDF')}/indic-custom-prompt-pdf-all"
-    start_time = time.time()
 
+    validate_language(tgt_lang, "target language")
+
+    text_response = await extract_text_file(file)
+
+    
+    # Parse JSON response
+    '''
     try:
-        file_content = await file.read()
-        files = {"file": (file.filename, file_content, "application/pdf")}
-        data = {
-            "prompt": prompt,
-            "query_language": query_lang,
-            "target_language": tgt_lang,
-            "model": model
-        }
+        page_contents_dict = json.loads(text_response.body.decode())["page_contents"]
+    except (json.JSONDecodeError, KeyError) as e:
+        logger.error("Failed to parse text_response: %s", str(e))
+        raise HTTPException(status_code=500, detail="Invalid OCR response format")
 
-        response = requests.post(
-            external_url,
-            files=files,
-            data=data,
-            headers={"accept": "application/json"},
-            timeout=30
-        )
-        response.raise_for_status()
 
-        response_data = response.json()
-        original_text = response_data.get("original_text", "")
-        query_answer = response_data.get("query_answer", "")
-        translated_query_answer = response_data.get("translated_query_answer", "")
+    if not page_contents_dict:
+        raise HTTPException(status_code=500, detail="No text extracted from PDF pages")
+    '''
+    try:
+    # Convert dictionary values to a single string
+        text_response_string = text_response
+        #text_response_string = "\n".join(str(value) for value in page_contents_dict.values() if value)
         
+        if not text_response_string.strip():
+            raise HTTPException(status_code=500, detail="Extracted text is empty")
+
+        client = get_openai_client(model)
+
+        system_prompt = f"Return the answer only in {tgt_lang} language"
+        summary_response = client.chat.completions.create(
+            model=model,
+            messages=[
+                {
+                    "role": "system",
+                    "content": [{"type": "text", "text": system_prompt}]
+                },
+                {
+                    "role": "user",
+                    "content": f" {query_lang} :\n\n{text_response_string}"
+                }
+            ],
+            temperature=0.3,
+            max_tokens=500
+        )
+        summary = summary_response.choices[0].message.content
+        
+        if not summary:
+            raise HTTPException(status_code=500, detail="Summary generation failed")
+
+    
+        original_text= text_response_string
+        query_answer = summary
+        translated_query_answer = summary
         if not original_text or not query_answer or not translated_query_answer:
             logger.warning(f"Incomplete response from external API: original_text={'present' if original_text else 'missing'}, query_answer={'present' if query_answer else 'missing'}, translated_query_answer={'present' if translated_query_answer else 'missing'}")
             return IndicCustomPromptPDFAllResponse(
@@ -2058,23 +2335,25 @@ async def indic_custom_prompt_pdf_all(
                 translated_query_answer=translated_query_answer or "No translated response provided",
                 )
 
-        logger.debug(f"Indic custom prompt PDF completed in {time.time() - start_time:.2f} seconds")
+        #logger.debug(f"Indic custom prompt PDF completed in {time.time() - start_time:.2f} seconds")
         return IndicCustomPromptPDFAllResponse(
             original_text=original_text,
             query_answer=query_answer,
             translated_query_answer=translated_query_answer,
         )
-
+    
     except requests.Timeout:
         logger.error("External indic custom prompt PDF API timed out")
-        raise HTTPException(status_code=504, detail="External API timeout")
+    raise HTTPException(status_code=504, detail="External API timeout")
+
+'''
     except requests.RequestException as e:
         logger.error(f"External indic custom prompt PDF API error: {str(e)}")
         raise HTTPException(status_code=500, detail=f"External API error: {str(e)}")
     except ValueError as e:
         logger.error(f"Invalid JSON response from external API: {str(e)}")
         raise HTTPException(status_code=500, detail="Invalid response format from external API")
-
+'''
 
 @app.post("/v1/indic-custom-prompt-kannada-pdf",
           summary="Generate Kannada PDF with Custom Prompt",

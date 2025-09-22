@@ -14,14 +14,14 @@ httpx
 num2words
 pytz
 
-opencv-python
+#opencv-python
 dwani
 sounddevice
 scipy
 #playsound
 #pytz
 #pygobject
-ultralytics
+#ultralytics
 fastapi
 uvicorn
 python-multipart

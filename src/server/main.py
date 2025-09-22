@@ -28,7 +28,7 @@ from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.responses import Response, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 #from ultralytics import YOLO
-import cv2
+#import cv2
 import numpy as np
 
 

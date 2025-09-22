@@ -1,14 +1,11 @@
-version: '3.9'
-
 services:
   fastapi:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: app.Dockerfile
     container_name: dwani_api
     ports:
-      - "9000:9000" # Expose port 9000 for external access (Gemma model)
-      - "8000:8000" # Expose port 8000 for internal FastAPI server (optional, can be removed if not needed externally)
+      - "18888:18888" # Expose port 8000 for internal FastAPI server (optional, can be removed if not needed externally)
     environment:
       - DWANI_API_BASE_URL_PDF=${DWANI_API_BASE_URL_PDF}
       - DWANI_API_BASE_URL_VISION=${DWANI_API_BASE_URL_VISION}
@@ -21,9 +18,7 @@ services:
     volumes:
       - .:/app
     restart: unless-stopped
-    networks:
-      - dwani_network
-
+    network_mode: host
 networks:
   dwani_network:
     driver: bridge

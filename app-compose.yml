@@ -1,9 +1,7 @@
 services:
-  fastapi:
-    build:
-      context: .
-      dockerfile: app.Dockerfile
-    container_name: dwani_api
+  app:
+    image: dwani/api-server:latest
+    container_name: dwani_api_server
     ports:
       - "18888:18888" # Expose port 8000 for internal FastAPI server (optional, can be removed if not needed externally)
     environment:

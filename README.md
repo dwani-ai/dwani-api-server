@@ -22,6 +22,12 @@ docker build -t dwani/api-server:latest -f app.Dockerfile .
 docker push dwani/api-server:latest
 
 
+--
+
+
+docker build -t dwani/api-server-nginx:latest -f Dockerfile .
+
+ docker compose -f docker-compose.yml  up -d
 
 <!-- 
 docker run  --env-file .env -p 80:80 dwani/api-server:latest

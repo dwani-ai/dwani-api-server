@@ -41,6 +41,11 @@ docker build -t dwani/api-server:latest -f Dockerfile .
 
 
 docker run  --env-file .env dwani/api-server:latest
+
+pip install vllm 
+
+vllm serve RedHatAI/gemma-3-4b-it-FP8-dynamic --served-model-name gemma3 --host 0.0.0.0 --port 9000 --gpu-memory-utilization 0.9 --tensor-parallel-size 1 --max-model-len 8192 --disable-log-requests --dtype bfloat16 --enable-chunked-prefill --enable-prefix-caching --max-num-batched-tokens 8192 --chat-template-content-format openai
+
 -->
 
 

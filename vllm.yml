@@ -1,8 +1,6 @@
 services:
   vllm:
     image: vllm/vllm-openai:latest
-    ports:
-      - "80:9000"
     command: [
       "--model", "RedHatAI/gemma-3-12b-it-FP8-dynamic",
       "--served-model-name", "gemma3",
@@ -28,6 +26,19 @@ services:
     networks:
       - app-network
     restart: unless-stopped
+
+  nginx:
+    image: nginx:latest
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - vllm
+    networks:
+      - app-network
+    restart: unless-stopped
+
 networks:
   app-network:
     driver: bridge

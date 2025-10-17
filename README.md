@@ -1,5 +1,10 @@
 dwani.ai - API Management Server
 
+--
+docker compose -f gcp-compose.yml up -d
+
+--
+
 
 sudo apt-get install poppler-utils -y
 

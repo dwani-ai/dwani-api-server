@@ -1,6 +1,7 @@
-# Use official Python runtime as base image
-FROM python:3.10-slim
+# Use official Python slim image as base
+FROM python:3.10-slim AS builder
 
+# Set working directory
 WORKDIR /app
 
 # Set environment variables
@@ -11,26 +12,46 @@ ENV PYTHONUNBUFFERED=1
 RUN apt-get update && apt-get install -y \
     gcc \
     curl \
-    libgl1 \
-    libglib2.0-0 \
-    libsm6 \
-    libxext6 \
-    libxrender1 \
-    libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY . .
+# Final stage
+FROM python:3.10-slim
 
+# Install Nginx and supervisor
+RUN apt-get update && apt-get install -y \
+    nginx \
+    supervisor \
+    && rm -rf /var/lib/apt/lists/*
 
-# Create appuser and set permissions for /app and /data
+# Copy Python dependencies from builder
+COPY --from=builder /usr/local /usr/local
+
+# Set working directory
+WORKDIR /app
+
+# Create appuser and set permissions
 RUN useradd -ms /bin/bash appuser \
     && mkdir -p /data \
-    && chown -R appuser:appuser /app /data
+    && chown -R appuser:appuser /app /data /var/log/nginx /var/lib/nginx
 
+# Copy application code
+COPY src/ /app/src/
+
+# Copy Nginx configuration
+COPY nginx/nginx.conf /etc/nginx/nginx.conf
+
+# Expose port 8080 internally (map to 80 on host via -p 80:8080)
+EXPOSE 8080
+
+# Copy supervisor configuration
+COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
+
+# Run as non-root user
 USER appuser
 
-CMD ["python", "-m" , "src.server.main", "--host", "0.0.0.0", "--port", "80"]
+# Command to run supervisor (manages Nginx and Uvicorn)
+CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]

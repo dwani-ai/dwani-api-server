@@ -1,5 +1,10 @@
 dwani.ai - API Management Server
 
+--
+docker compose -f gcp-compose.yml up -d
+
+--
+
 
 sudo apt-get install poppler-utils -y
 
@@ -12,19 +17,25 @@ pip install -r requirements.txt
 
 uvicorn src.server.main:app --host 0.0.0.0 --port 18888 
 
-<!-- 
-sudo docker compose -f new_compose.yml up -d
+--
+
+docker compose -f app-compose.yml up -d
 
 
-docker build -t dwani/api-server:latest -f Dockerfile .
+docker build -t dwani/api-server:latest -f app.Dockerfile .
 
 docker push dwani/api-server:latest
 
-docker run  --env-file .env -p 80:80 dwani/api-server:latest
--->
+
+--
+
+
+docker build -t dwani/api-server-nginx:latest -f Dockerfile .
+
+ docker compose -f docker-compose.yml  up -d
 
 <!-- 
-
+docker run  --env-file .env -p 80:80 dwani/api-server:latest
 DOCKER_BUILDKIT=1 docker build -t slabstech/dwani-api-server .
 
 
@@ -35,6 +46,11 @@ docker build -t dwani/api-server:latest -f Dockerfile .
 
 
 docker run  --env-file .env dwani/api-server:latest
+
+pip install vllm 
+
+vllm serve RedHatAI/gemma-3-4b-it-FP8-dynamic --served-model-name gemma3 --host 0.0.0.0 --port 9000 --gpu-memory-utilization 0.9 --tensor-parallel-size 1 --max-model-len 8192 --disable-log-requests --dtype bfloat16 --enable-chunked-prefill --enable-prefix-caching --max-num-batched-tokens 8192 --chat-template-content-format openai
+
 -->
 
 

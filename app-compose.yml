@@ -1,0 +1,22 @@
+services:
+  app:
+    image: dwani/api-server:latest
+    container_name: dwani_api_server
+    ports:
+      - "18888:18888" # Expose port 8000 for internal FastAPI server (optional, can be removed if not needed externally)
+    environment:
+      - DWANI_API_BASE_URL_PDF=${DWANI_API_BASE_URL_PDF}
+      - DWANI_API_BASE_URL_VISION=${DWANI_API_BASE_URL_VISION}
+      - DWANI_API_BASE_URL_LLM=${DWANI_API_BASE_URL_LLM}
+      - DWANI_API_BASE_URL_LLM_QWEN=${DWANI_API_BASE_URL_LLM_QWEN}
+      - DWANI_API_BASE_URL_TTS=${DWANI_API_BASE_URL_TTS}
+      - DWANI_API_BASE_URL_ASR=${DWANI_API_BASE_URL_ASR}
+      - DWANI_API_BASE_URL_TRANSLATE=${DWANI_API_BASE_URL_TRANSLATE}
+      - DWANI_API_BASE_URL_S2S=${DWANI_API_BASE_URL_S2S}
+    volumes:
+      - .:/app
+    restart: unless-stopped
+    network_mode: host
+networks:
+  dwani_network:
+    driver: bridge

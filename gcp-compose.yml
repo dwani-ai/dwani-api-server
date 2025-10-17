@@ -1,16 +1,46 @@
 services:
+  vllm:
+    image: vllm/vllm-openai:latest
+    ports:
+      - "9000:9000"
+    command: [
+      "--model", "RedHatAI/gemma-3-12b-it-FP8-dynamic",
+      "--served-model-name", "gemma3",
+      "--host", "0.0.0.0",
+      "--port", "9000",
+      "--gpu-memory-utilization", "0.9",
+      "--tensor-parallel-size", "1",
+      "--max-model-len", "8192",
+      "--disable-log-requests",
+      "--dtype", "bfloat16",
+      "--enable-chunked-prefill",
+      "--enable-prefix-caching",
+      "--max-num-batched-tokens", "8192",
+      "--chat-template-content-format", "openai"
+    ]
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    networks:
+      - app-network
+    restart: unless-stopped
+
   fastapi:
     image: dwani/api-server:latest  # Replace with your FastAPI Docker image
     container_name: fastapi_server
     ports:
-      - "80:18888"  # Expose FastAPI server port (adjust if needed)
+      - "80:18888"  # Updated to match the EXPOSE 18888 in the Dockerfile
     environment:
       - HF_TOKEN=hf_this_is_a_valid_token_for_not_google
       - API_KEY_SECRET=dwani-very-secret-key-please-dont-tell-anyone
       - CHAT_RATE_LIMIT=100/minute
       - DWANI_API_BASE_URL_PDF=http://host.docker.internal:7861
       - DWANI_API_BASE_URL_VISION=http://host.docker.internal:7861
-      - DWANI_API_BASE_URL_LLM=http://host.docker.internal:7861
+      - DWANI_API_BASE_URL_LLM=http://vllm:9000  # Updated to point to vLLM service
       - DWANI_API_BASE_URL_LLM_QWEN=http://host.docker.internal:7880
       - DWANI_API_BASE_URL_TTS=http://host.docker.internal:7864
       - DWANI_API_BASE_URL_ASR=http://host.docker.internal:7863
@@ -24,6 +54,8 @@ services:
       - app-network
     extra_hosts:
       - "host.docker.internal:host-gateway"  # Allows access to host's localhost
+    depends_on:
+      - vllm  # Ensure vLLM service starts before FastAPI
     restart: unless-stopped
 
 networks:

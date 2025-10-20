@@ -1,6 +1,8 @@
 services:
   vllm:
-    image: vllm/vllm-openai:v0.8.5
+    build:
+      context: .
+      dockerfile: vllm.Dockerfile
     command: [
       "--model", "deepseek-ai/DeepSeek-OCR",
       "--served-model-name", "gemma3",

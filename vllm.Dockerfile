@@ -20,7 +20,7 @@ WORKDIR /app
 
 # Copy requirements.txt and the vLLM wheel file (assumes these are in the build context)
 COPY requirements.txt .
-RUN wget https://github.com/vllm-project/vllm/releases/download/v0.8.5/vllm-0.8.5+cu118-cp38-abi3-manylinux1_x86_64.whl
+RUN curl -O https://github.com/vllm-project/vllm/releases/download/v0.8.5/vllm-0.8.5+cu118-cp38-abi3-manylinux1_x86_64.whl
 #COPY vllm-0.8.5+cu118-cp38-abi3-manylinux1_x86_64.whl .
 
 # Upgrade pip

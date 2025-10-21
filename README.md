@@ -34,6 +34,16 @@ docker build -t dwani/api-server-nginx:latest -f Dockerfile .
 
  docker compose -f docker-compose.yml  up -d
 
+
+--
+
+deepseek-ocr  : https://huggingface.co/deepseek-ai/DeepSeek-OCR
+
+
+https://github.com/deepseek-ai/DeepSeek-OCR/
+
+
+
 <!-- 
 docker run  --env-file .env -p 80:80 dwani/api-server:latest
 DOCKER_BUILDKIT=1 docker build -t slabstech/dwani-api-server .

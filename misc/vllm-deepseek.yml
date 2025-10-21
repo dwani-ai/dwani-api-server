@@ -1,8 +1,10 @@
 services:
   vllm:
-    image: vllm/vllm-openai:latest
+    build:
+      context: .
+      dockerfile: vllm.Dockerfile
     command: [
-      "--model", "RedHatAI/gemma-3-12b-it-FP8-dynamic",
+      "--model", "deepseek-ai/DeepSeek-OCR",
       "--served-model-name", "gemma3",
       "--host", "0.0.0.0",
       "--port", "9000",

@@ -8,7 +8,7 @@ services:
       "--port", "9000",
       "--gpu-memory-utilization", "0.9",
       "--tensor-parallel-size", "1",
-      "--max-model-len", "32768",
+      "--max-model-len", "28576",
       "--disable-log-requests",
       "--dtype", "bfloat16",
       "--enable-chunked-prefill",

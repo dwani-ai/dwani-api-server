@@ -2561,6 +2561,8 @@ def get_openai_client(model: str) -> OpenAI:
         "sarvam-m": "7884",
     }
     base_url = f"http://0.0.0.0:{model_ports[model]}/v1"
+
+    ## TODO - Fix this hardcide 
     base_url = "https://"
 
     return OpenAI(api_key="http", base_url=base_url)

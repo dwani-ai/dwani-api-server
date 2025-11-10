@@ -793,6 +793,33 @@ async def transcribe_audio(
             raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")
         
 
+from fastapi import HTTPException
+import json
+import logging
+
+
+# Language options mapping
+language_options = [
+    ("English", "eng_Latn"),
+    ("Kannada", "kan_Knda"),
+    ("Hindi", "hin_Deva"), 
+    ("Assamese", "asm_Beng"),
+    ("Bengali", "ben_Beng"),
+    ("Gujarati", "guj_Gujr"),
+    ("Malayalam", "mal_Mlym"),
+    ("Marathi", "mar_Deva"),
+    ("Odia", "ory_Orya"),
+    ("Punjabi", "pan_Guru"),
+    ("Tamil", "tam_Taml"),
+    ("Telugu", "tel_Telu"),
+    ("German", "deu_Latn") 
+]
+
+# Mapping from code to language name
+code_to_name = {code: name for name, code in language_options}
+
+# Assuming SUPPORTED_LANGUAGES is defined as set of codes
+SUPPORTED_LANGUAGES = {code for _, code in language_options}
 
 @app.post("/v1/translate", 
           response_model=TranslationResponse,
@@ -816,12 +843,16 @@ async def translate(
     if request.src_lang not in SUPPORTED_LANGUAGES or request.tgt_lang not in SUPPORTED_LANGUAGES:
         raise HTTPException(status_code=400, detail=f"Unsupported language codes: src={request.src_lang}, tgt={request.tgt_lang}")
 
-    logger.debug(f"Received translation request: {len(request.sentences)} sentences, src_lang: {request.src_lang}, tgt_lang: {request.tgt_lang}")
+    # Convert language codes to names for the prompt
+    src_name = code_to_name.get(request.src_lang, request.src_lang)
+    tgt_name = code_to_name.get(request.tgt_lang, request.tgt_lang)
+
+    logger.debug(f"Received translation request: {len(request.sentences)} sentences, src_lang: {request.src_lang} ({src_name}), tgt_lang: {request.tgt_lang} ({tgt_name})")
 
     model = "gemma3"
     client = get_openai_client(model)
 
-    system_prompt = f"You are a professional translator. Translate the following list of sentences from {request.src_lang} to {request.tgt_lang}. Respond ONLY with a valid JSON array of the translated sentences in the same order, without any additional text or explanations."
+    system_prompt = f"You are a professional translator. Translate the following list of sentences from {src_name} to {tgt_name}. Respond ONLY with a valid JSON array of the translated sentences in the same order, without any additional text or explanations."
     
     sentences_text = "\n".join([f"{i+1}. {sentence}" for i, sentence in enumerate(request.sentences)])
     user_prompt = f"Sentences to translate:\n\n{sentences_text}"
@@ -846,7 +877,6 @@ async def translate(
         query_answer = response.choices[0].message.content.strip()
         
         # Parse the JSON array from the response
-        import json
         translations = json.loads(query_answer)
         
         if not isinstance(translations, list) or len(translations) != len(request.sentences):
@@ -861,7 +891,7 @@ async def translate(
         raise HTTPException(status_code=500, detail="Invalid response format from translation model")
     except Exception as e:
         logger.error(f"Error during translation: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Translation failed: {str(e)}")        
+        raise HTTPException(status_code=500, detail=f"Translation failed: {str(e)}")
 
 '''
 @app.post("/v1/translate", 

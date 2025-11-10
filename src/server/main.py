@@ -791,7 +791,79 @@ async def transcribe_audio(
         except requests.RequestException as e:
             logger.error(f"Transcription request failed: {str(e)}")
             raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")
+        
 
+
+@app.post("/v1/translate", 
+          response_model=TranslationResponse,
+          summary="Translate Text",
+          description="Translate a list of sentences from a source to a target language.",
+          tags=["Translation"],
+          responses={
+              200: {"description": "Translation result", "model": TranslationResponse},
+              400: {"description": "Invalid sentences or languages"},
+              500: {"description": "Translation service error"},
+              504: {"description": "Translation service timeout"}
+          })
+async def translate(
+    request: TranslationRequest
+):
+    # Validate inputs
+    if not request.sentences:
+        raise HTTPException(status_code=400, detail="Sentences cannot be empty")
+    
+    # Validate language codes
+    if request.src_lang not in SUPPORTED_LANGUAGES or request.tgt_lang not in SUPPORTED_LANGUAGES:
+        raise HTTPException(status_code=400, detail=f"Unsupported language codes: src={request.src_lang}, tgt={request.tgt_lang}")
+
+    logger.debug(f"Received translation request: {len(request.sentences)} sentences, src_lang: {request.src_lang}, tgt_lang: {request.tgt_lang}")
+
+    model = "gemma3"
+    client = get_openai_client(model)
+
+    system_prompt = f"You are a professional translator. Translate the following list of sentences from {request.src_lang} to {request.tgt_lang}. Respond ONLY with a valid JSON array of the translated sentences in the same order, without any additional text or explanations."
+    
+    sentences_text = "\n".join([f"{i+1}. {sentence}" for i, sentence in enumerate(request.sentences)])
+    user_prompt = f"Sentences to translate:\n\n{sentences_text}"
+
+    try:
+        response = client.chat.completions.create(
+            model=model,
+            messages=[
+                {
+                    "role": "system",
+                    "content": system_prompt
+                },
+                {
+                    "role": "user",
+                    "content": user_prompt
+                }
+            ],
+            temperature=0.1,  # Low temperature for consistent translations
+            max_tokens=2000   # Adjust based on expected output length
+        )
+        
+        query_answer = response.choices[0].message.content.strip()
+        
+        # Parse the JSON array from the response
+        import json
+        translations = json.loads(query_answer)
+        
+        if not isinstance(translations, list) or len(translations) != len(request.sentences):
+            logger.warning(f"Unexpected response format: {query_answer}")
+            raise HTTPException(status_code=500, detail="Invalid response format from translation model")
+        
+        logger.debug(f"Translation successful: {translations}")
+        return TranslationResponse(translations=translations)
+        
+    except json.JSONDecodeError as e:
+        logger.error(f"Failed to parse JSON response: {str(e)}")
+        raise HTTPException(status_code=500, detail="Invalid response format from translation model")
+    except Exception as e:
+        logger.error(f"Error during translation: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Translation failed: {str(e)}")        
+
+'''
 @app.post("/v1/translate", 
           response_model=TranslationResponse,
           summary="Translate Text",
@@ -839,7 +911,7 @@ async def translate(
 
         response_data = response.json()
         translations = response_data.get("translations", [])
-
+        ''''''
         if not translations or len(translations) != len(request.sentences):
             logger.warning(f"Unexpected response format: {response_data}")
             raise HTTPException(status_code=500, detail="Invalid response from translation service")
@@ -856,7 +928,7 @@ async def translate(
     except ValueError as e:
         logger.error(f"Invalid JSON response: {str(e)}")
         raise HTTPException(status_code=500, detail="Invalid response format from translation service")
-
+'''
 class VisualQueryResponse(BaseModel):
     answer: str
 

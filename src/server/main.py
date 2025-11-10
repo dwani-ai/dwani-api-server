@@ -2563,7 +2563,7 @@ def get_openai_client(model: str) -> OpenAI:
     base_url = f"http://0.0.0.0:{model_ports[model]}/v1"
 
     ## TODO - Fix this hardcide 
-    base_url = "https://"
+    base_url = "https://<some-thing-here>.dwani.ai"
 
     return OpenAI(api_key="http", base_url=base_url)
 

@@ -2007,10 +2007,10 @@ from typing import List, Literal, Optional
 import base64
 from pydantic import BaseModel
 
-# Assuming these are your existing helpers
-# from your_module import get_async_openai_client, render_pdf_to_png, encode_image
 
-async def extract_text_file(pdf_file) -> str:
+#TODO 
+## handle timeout issue
+async def new_extract_text_file(pdf_file) -> str:
     model = "gemma3"  # or whichever vision model you're using that supports multiple images + structured output
     
     # Convert PDF to list of PIL Images
@@ -2144,9 +2144,7 @@ async def extract_text_file(pdf_file):
     
     return result
 
-#TODO 
-## handle timeout issue
-async def new_extract_text_page(pdf_file, page_number):
+async def extract_text_page(pdf_file, page_number):
     model="gemma3"
     client = get_async_openai_client(model)
     images = await render_pdf_to_png(pdf_file)

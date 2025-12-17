@@ -1,27 +1,27 @@
 services:
   llama_cpp:
-    image: ghcr.io/ggerganov/llama.cpp:server-cuda-latest
+    image: ghcr.io/ggml-org/llama.cpp:server-cuda
     command:
       - --model
-      - /models/Qwen3VL-8B-Instruct-Q8_0.gguf  # High quality, fits comfortably in 24GB VRAM
+      - /models/Qwen3VL-8B-Instruct-Q8_0.gguf
       - --mmproj
-      - /models/mmproj-Qwen3VL-8B-Instruct-Q8_0.gguf  # F16 for best vision accuracy
+      - /models/mmproj-Qwen3VL-8B-Instruct-Q8_0.gguf
       - --host
       - 0.0.0.0
       - --port
-      - 9000
+      - "9000"
       - --ctx-size
-      - 24576  # Matches your original max-model-len; native support up to 256K, but this is safe for VRAM
+      - "24576"
       - --n-gpu-layers
-      - 99  # Full offload to GPU
+      - "99"
       - --batch-size
-      - 8192
+      - "8192"
       - --ubatch-size
-      - 512  # Helps with larger batch/context on single GPU
+      - "512"
       - --jinja
-      - --flash-attn  # Enables faster attention (recommended for L4/Ada GPUs)
+      - --flash-attn
       - --temp
-      - 0.7
+      - "0.7"
     volumes:
       - ./models:/models
     deploy:

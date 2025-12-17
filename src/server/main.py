@@ -1995,7 +1995,8 @@ def get_async_openai_client(model: str) -> AsyncOpenAI:
         "gpt-oss": "9500",
     }
     base_url = f"http://0.0.0.0:{model_ports[model]}/v1"
-    base_url = "https://"
+    ## TODO - Fix this hardcide 
+    base_url = "https://<some-thing-here>.dwani.ai"
     return AsyncOpenAI(api_key="http", base_url=base_url)
 
 async def extract_text_file(pdf_file):
@@ -2648,8 +2649,8 @@ def get_openai_client(model: str) -> OpenAI:
     base_url = f"http://0.0.0.0:{model_ports[model]}/v1"
 
     ## TODO - Fix this hardcide 
-    base_url = "https://<some-thing-here>.dwani.ai"
 
+    base_url = "https://<some-thing-here>.dwani.ai"
     return OpenAI(api_key="http", base_url=base_url)
 
 

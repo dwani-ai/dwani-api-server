@@ -1,5 +1,10 @@
 dwani.ai - API Management Server
 
+Dec 17 
+docker build -t dwani/api-server:latest -f app.Dockerfile .
+docker compose -f api-server.yml up -d
+
+
 --
 docker compose -f gcp-compose.yml up -d
 

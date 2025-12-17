@@ -215,14 +215,20 @@ async def detect_image(
 '''
 
 # Pydantic models (updated to include model validation)
+from typing import Dict, List, Optional
+from pydantic import BaseModel, Field, ConfigDict
+# Assuming SUPPORTED_MODELS is defined elsewhere
+# from your_module import SUPPORTED_MODELS
+
+
 class VisualQueryRequest(BaseModel):
     query: str = Field(..., description="Text query", max_length=1000)
     src_lang: str = Field(..., description="Source language code")
     tgt_lang: str = Field(..., description="Target language code")
     model: str = Field(default="gemma3", description="LLM model", enum=SUPPORTED_MODELS)
 
-    class Config:
-        schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "query": "Describe the image",
                 "src_lang": "eng_Latn",
@@ -230,63 +236,78 @@ class VisualQueryRequest(BaseModel):
                 "model": "moondream"
             }
         }
+    )
+
 
 class OCRRequest(BaseModel):
     model: str = Field(default="gemma3", description="LLM model", enum=SUPPORTED_MODELS)
-    class Config:
-        schema_extra = {
+
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "model": "moondream"
             }
         }
+    )
+
 
 class VisualQueryDirectRequest(BaseModel):
     query: str = Field(..., description="Text query", max_length=1000)
     model: str = Field(default="gemma3", description="LLM model", enum=SUPPORTED_MODELS)
 
-    class Config:
-        schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "query": "Describe the image",
                 "model": "moondream"
             }
         }
+    )
+
 
 class VisualQueryResponse(BaseModel):
     answer: str
 
-    class Config:
-        schema_extra = {"example": {"answer": "The image shows a screenshot of a webpage."}}
+    model_config = ConfigDict(
+        json_schema_extra={"example": {"answer": "The image shows a screenshot of a webpage."}}
+    )
+
 
 class OCRResponse(BaseModel):
     answer: str
 
-    class Config:
-        schema_extra = {"example": {"answer": "The image shows a screenshot of a webpage."}}
+    model_config = ConfigDict(
+        json_schema_extra={"example": {"answer": "The image shows a screenshot of a webpage."}}
+    )
 
 
 class VisualQueryDirectResponse(BaseModel):
     answer: str
 
-    class Config:
-        schema_extra = {"example": {"answer": "The image shows a screenshot of a webpage."}}
+    model_config = ConfigDict(
+        json_schema_extra={"example": {"answer": "The image shows a screenshot of a webpage."}}
+    )
+
 
 class PDFTextExtractionResponse(BaseModel):
     page_content: str = Field(..., description="Extracted text from the specified PDF page")
 
-    class Config:
-        schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "page_content": "Google Interview Preparation Guide\nCustomer Engineer Specialist\n\nOur hiring process\n..."
             }
         }
+    )
 
 
 class PDFTextExtractionAllResponse(BaseModel):
-    page_contents: Dict[str, str] = Field(..., description="Extracted text from each PDF page, with page numbers as keys and text content as values")
+    page_contents: Dict[str, str] = Field(
+        ..., description="Extracted text from each PDF page, with page numbers as keys and text content as values"
+    )
 
-    class Config:
-        schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "page_contents": {
                     "0": "Google Interview Preparation Guide\nCustomer Engineer Specialist\n\nOur hiring process\n...",
@@ -294,6 +315,7 @@ class PDFTextExtractionAllResponse(BaseModel):
                 }
             }
         }
+    )
 
 
 class DocumentProcessPage(BaseModel):
@@ -301,8 +323,10 @@ class DocumentProcessPage(BaseModel):
     page_content: str = Field(..., description="Extracted text from the page")
     translated_content: Optional[str] = Field(None, description="Translated text of the page, if applicable")
 
+
 class DocumentProcessResponse(BaseModel):
     pages: List[DocumentProcessPage] = Field(..., description="List of pages with extracted and translated text")
+
 
 class SummarizePDFResponse(BaseModel):
     original_text: str = Field(..., description="Extracted text from the specified page")
@@ -316,16 +340,18 @@ class IndicSummarizePDFResponse(BaseModel):
     translated_summary: str = Field(..., description="Summary translated into the target language")
     processed_page: int = Field(..., description="Page number processed")
 
+
 class IndicSummarizeAllPDFResponse(BaseModel):
     original_text: str = Field(..., description="Extracted text from the specified page")
     summary: str = Field(..., description="Summary of the specified page in the source language")
     translated_summary: str = Field(..., description="Summary translated into the target language")
-    
+
 
 class CustomPromptPDFResponse(BaseModel):
     original_text: str = Field(..., description="Extracted text from the specified page")
     response: str = Field(..., description="Response based on the custom prompt")
     processed_page: int = Field(..., description="Page number processed")
+
 
 class IndicCustomPromptPDFResponse(BaseModel):
     original_text: str = Field(..., description="Extracted text from the specified page")
@@ -333,11 +359,13 @@ class IndicCustomPromptPDFResponse(BaseModel):
     translated_query_answer: str = Field(..., description="Translated response in the target language")
     processed_page: int = Field(..., description="Page number processed")
 
+
 class IndicCustomPromptPDFAllResponse(BaseModel):
     original_text: str = Field(..., description="Extracted text from the specified page")
     query_answer: str = Field(..., description="Response based on the custom prompt")
     translated_query_answer: str = Field(..., description="Translated response in the target language")
-    
+
+
 # Helper function for model selection
 def validate_model(model: str) -> str:
     if model not in SUPPORTED_MODELS:
@@ -351,24 +379,35 @@ def validate_language(lang: str, field_name: str) -> str:
     return lang
 
 
-# Request/Response Models
+from typing import List
+from pydantic import BaseModel, Field, ConfigDict
+# If you have SUPPORTED_MODELS elsewhere, import it
+# from your_module import SUPPORTED_MODELS
+
+
 class TranscriptionResponse(BaseModel):
     text: str = Field(..., description="Transcribed text from the audio")
 
-    class Config:
-        schema_extra = {"example": {"text": "Hello, how are you?"}} 
+    model_config = ConfigDict(
+        json_schema_extra={"example": {"text": "Hello, how are you?"}}
+    )
+
 
 class TextGenerationResponse(BaseModel):
     text: str = Field(..., description="Generated text response")
 
-    class Config:
-        schema_extra = {"example": {"text": "Hi there, I'm doing great!"}} 
+    model_config = ConfigDict(
+        json_schema_extra={"example": {"text": "Hi there, I'm doing great!"}}
+    )
+
 
 class AudioProcessingResponse(BaseModel):
     result: str = Field(..., description="Processed audio result")
 
-    class Config:
-        schema_extra = {"example": {"result": "Processed audio output"}} 
+    model_config = ConfigDict(
+        json_schema_extra={"example": {"result": "Processed audio output"}}
+    )
+
 
 class ChatRequest(BaseModel):
     prompt: str = Field(..., description="Prompt for chat (max 10000 characters)", max_length=10000)
@@ -376,8 +415,8 @@ class ChatRequest(BaseModel):
     tgt_lang: str = Field(..., description="Target language code")
     model: str = Field(default="gemma3", description="LLM model")
 
-    class Config:
-        schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "prompt": "Hello, how are you?",
                 "src_lang": "kan_Knda",
@@ -385,62 +424,73 @@ class ChatRequest(BaseModel):
                 "model": "gemma3"
             }
         }
+    )
+
 
 class ChatDirectRequest(BaseModel):
     prompt: str = Field(..., description="Prompt for chat (max 10000 characters)", max_length=10000)
     model: str = Field(default="gemma3", description="LLM model")
     system_prompt: str = Field(default="", description="System prompt")
 
-    class Config:
-        schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "prompt": "Hello, how are you?",
                 "model": "gemma3",
                 "system_prompt": ""
             }
         }
+    )
 
 
 class ChatResponse(BaseModel):
     response: str = Field(..., description="Generated chat response")
 
-    class Config:
-        schema_extra = {"example": {"response": "Hi there, I'm doing great!"}} 
+    model_config = ConfigDict(
+        json_schema_extra={"example": {"response": "Hi there, I'm doing great!"}}
+    )
 
 
 class ChatDirectResponse(BaseModel):
     response: str = Field(..., description="Generated chat response")
 
-    class Config:
-        schema_extra = {"example": {"response": "Hi there, I'm doing great!"}} 
+    model_config = ConfigDict(
+        json_schema_extra={"example": {"response": "Hi there, I'm doing great!"}}
+    )
+
 
 class TranslationRequest(BaseModel):
     sentences: List[str] = Field(..., description="List of sentences to translate")
     src_lang: str = Field(..., description="Source language code")
     tgt_lang: str = Field(..., description="Target language code")
 
-    class Config:
-        schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "sentences": ["Hello", "How are you?"],
                 "src_lang": "en",
                 "tgt_lang": "kan_Knda"
             }
         }
+    )
+
 
 class TranslationResponse(BaseModel):
     translations: List[str] = Field(..., description="Translated sentences")
 
-    class Config:
-        schema_extra = {"example": {"translations": ["ನಮಸ್ಕಾರ", "ನೀವು ಹೇಗಿದ್ದೀರಿ?"]}} 
+    model_config = ConfigDict(
+        json_schema_extra={"example": {"translations": ["ನಮಸ್ಕಾರ", "ನೀವು ಹೇಗಿದ್ದೀರಿ?"]}}
+    )
+
 
 class VisualQueryRequest(BaseModel):
     query: str = Field(..., description="Text query")
     src_lang: str = Field(..., description="Source language code")
     tgt_lang: str = Field(..., description="Target language code")
     model: str = Field(default="gemma3", description="LLM model")
-    class Config:
-        schema_extra = {
+
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "query": "Describe the image",
                 "src_lang": "kan_Knda",
@@ -448,12 +498,15 @@ class VisualQueryRequest(BaseModel):
                 "model": "gemma3"
             }
         }
+    )
+
 
 class VisualQueryResponse(BaseModel):
     answer: str
 
-    class Config:
-        schema_extra = {"example": {"answer": "The image shows a screenshot of a webpage."}}
+    model_config = ConfigDict(
+        json_schema_extra={"example": {"answer": "The image shows a screenshot of a webpage."}}
+    )
 
 import time
 
@@ -791,7 +844,109 @@ async def transcribe_audio(
         except requests.RequestException as e:
             logger.error(f"Transcription request failed: {str(e)}")
             raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")
+        
 
+from fastapi import HTTPException
+import json
+import logging
+
+
+# Language options mapping
+language_options = [
+    ("English", "eng_Latn"),
+    ("Kannada", "kan_Knda"),
+    ("Hindi", "hin_Deva"), 
+    ("Assamese", "asm_Beng"),
+    ("Bengali", "ben_Beng"),
+    ("Gujarati", "guj_Gujr"),
+    ("Malayalam", "mal_Mlym"),
+    ("Marathi", "mar_Deva"),
+    ("Odia", "ory_Orya"),
+    ("Punjabi", "pan_Guru"),
+    ("Tamil", "tam_Taml"),
+    ("Telugu", "tel_Telu"),
+    ("German", "deu_Latn") 
+]
+
+# Mapping from code to language name
+code_to_name = {code: name for name, code in language_options}
+
+# Assuming SUPPORTED_LANGUAGES is defined as set of codes
+SUPPORTED_LANGUAGES = {code for _, code in language_options}
+
+@app.post("/v1/translate", 
+          response_model=TranslationResponse,
+          summary="Translate Text",
+          description="Translate a list of sentences from a source to a target language.",
+          tags=["Translation"],
+          responses={
+              200: {"description": "Translation result", "model": TranslationResponse},
+              400: {"description": "Invalid sentences or languages"},
+              500: {"description": "Translation service error"},
+              504: {"description": "Translation service timeout"}
+          })
+async def translate(
+    request: TranslationRequest
+):
+    # Validate inputs
+    if not request.sentences:
+        raise HTTPException(status_code=400, detail="Sentences cannot be empty")
+    
+    # Validate language codes
+    if request.src_lang not in SUPPORTED_LANGUAGES or request.tgt_lang not in SUPPORTED_LANGUAGES:
+        raise HTTPException(status_code=400, detail=f"Unsupported language codes: src={request.src_lang}, tgt={request.tgt_lang}")
+
+    # Convert language codes to names for the prompt
+    src_name = code_to_name.get(request.src_lang, request.src_lang)
+    tgt_name = code_to_name.get(request.tgt_lang, request.tgt_lang)
+
+    logger.debug(f"Received translation request: {len(request.sentences)} sentences, src_lang: {request.src_lang} ({src_name}), tgt_lang: {request.tgt_lang} ({tgt_name})")
+
+    model = "gemma3"
+    client = get_openai_client(model)
+
+    system_prompt = f"You are a professional translator. Translate the following list of sentences from {src_name} to {tgt_name}. Respond ONLY with a valid JSON array of the translated sentences in the same order, without any additional text or explanations."
+    
+    sentences_text = "\n".join([f"{i+1}. {sentence}" for i, sentence in enumerate(request.sentences)])
+    user_prompt = f"Sentences to translate:\n\n{sentences_text}"
+
+    try:
+        response = client.chat.completions.create(
+            model=model,
+            messages=[
+                {
+                    "role": "system",
+                    "content": system_prompt
+                },
+                {
+                    "role": "user",
+                    "content": user_prompt
+                }
+            ],
+            temperature=0.1,  # Low temperature for consistent translations
+            max_tokens=2000   # Adjust based on expected output length
+        )
+        
+        query_answer = response.choices[0].message.content.strip()
+        
+        # Parse the JSON array from the response
+        translations = json.loads(query_answer)
+        
+        if not isinstance(translations, list) or len(translations) != len(request.sentences):
+            logger.warning(f"Unexpected response format: {query_answer}")
+            raise HTTPException(status_code=500, detail="Invalid response format from translation model")
+        
+        logger.debug(f"Translation successful: {translations}")
+        return TranslationResponse(translations=translations)
+        
+    except json.JSONDecodeError as e:
+        logger.error(f"Failed to parse JSON response: {str(e)}")
+        raise HTTPException(status_code=500, detail="Invalid response format from translation model")
+    except Exception as e:
+        logger.error(f"Error during translation: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Translation failed: {str(e)}")
+
+'''
 @app.post("/v1/translate", 
           response_model=TranslationResponse,
           summary="Translate Text",
@@ -839,7 +994,7 @@ async def translate(
 
         response_data = response.json()
         translations = response_data.get("translations", [])
-
+        ''''''
         if not translations or len(translations) != len(request.sentences):
             logger.warning(f"Unexpected response format: {response_data}")
             raise HTTPException(status_code=500, detail="Invalid response from translation service")
@@ -856,13 +1011,15 @@ async def translate(
     except ValueError as e:
         logger.error(f"Invalid JSON response: {str(e)}")
         raise HTTPException(status_code=500, detail="Invalid response format from translation service")
+'''
+from pydantic import BaseModel, ConfigDict
 
 class VisualQueryResponse(BaseModel):
     answer: str
 
-    class Config:
-        schema_extra = {"example": {"answer": "The image shows a screenshot of a webpage."}}
-
+    model_config = ConfigDict(
+        json_schema_extra={"example": {"answer": "The image shows a screenshot of a webpage."}}
+    )
 
 
 language_options = [
@@ -2489,7 +2646,9 @@ def get_openai_client(model: str) -> OpenAI:
         "sarvam-m": "7884",
     }
     base_url = f"http://0.0.0.0:{model_ports[model]}/v1"
-    base_url = "https://"
+
+    ## TODO - Fix this hardcide 
+    base_url = "https://<some-thing-here>.dwani.ai"
 
     return OpenAI(api_key="http", base_url=base_url)
 

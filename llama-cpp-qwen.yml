@@ -1,0 +1,52 @@
+services:
+  llama_cpp:
+    image: ghcr.io/ggerganov/llama.cpp:server-cuda-latest
+    command:
+      - --model
+      - /models/Qwen3VL-8B-Instruct-Q8_0.gguf  # High quality, fits comfortably in 24GB VRAM
+      - --mmproj
+      - /models/mmproj-Qwen3VL-8B-Instruct-Q8_0.gguf  # F16 for best vision accuracy
+      - --host
+      - 0.0.0.0
+      - --port
+      - 9000
+      - --ctx-size
+      - 24576  # Matches your original max-model-len; native support up to 256K, but this is safe for VRAM
+      - --n-gpu-layers
+      - 99  # Full offload to GPU
+      - --batch-size
+      - 8192
+      - --ubatch-size
+      - 512  # Helps with larger batch/context on single GPU
+      - --jinja
+      - --flash-attn  # Enables faster attention (recommended for L4/Ada GPUs)
+      - --temp
+      - 0.7
+    volumes:
+      - ./models:/models
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    networks:
+      - app-network
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:latest
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - llama_cpp
+    networks:
+      - app-network
+    restart: unless-stopped
+
+networks:
+  app-network:
+    driver: bridge

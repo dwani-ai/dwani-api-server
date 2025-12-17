@@ -18,8 +18,7 @@ command: [
   "--chat-template-content-format", "openai",
   "--enable-auto-tool-choice",
   "--tool-call-parser", "hermes",
-  "--limit-mm-per-prompt", "image=10"  # Allow multiple images if needed
-]    
+  "--limit-mm-per-prompt", '{"image": 10, "video": 0}']    
     deploy:
       resources:
         reservations:

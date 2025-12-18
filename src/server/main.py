@@ -1997,6 +1997,7 @@ def get_async_openai_client(model: str) -> AsyncOpenAI:
     base_url = f"http://0.0.0.0:{model_ports[model]}/v1"
     ## TODO - Fix this hardcide 
     base_url = "https://<some-thing-here>.dwani.ai/v1"
+
     return AsyncOpenAI(api_key="http", base_url=base_url)
 
 
@@ -2214,12 +2215,8 @@ async def app_extract_text_from_pdf(pdf_file: UploadFile) -> str:
     model = "gemma3"  # or whatever vision model you're using (e.g., gpt-4o, gemma3, etc.)
     client = get_async_openai_client(model)
     
-    # Read PDF content
-    pdf_content = await pdf_file.read()
-    pdf_bytes_io = BytesIO(pdf_content)
-    
     # Convert PDF pages to images
-    images: List[Image.Image] = await render_pdf_to_png(pdf_bytes_io)
+    images: List[Image.Image] = await render_pdf_to_png(pdf_file)
     
     if not images:
         raise HTTPException(status_code=400, detail="No pages found in PDF or failed to render pages")
@@ -2878,6 +2875,7 @@ def get_openai_client(model: str) -> OpenAI:
     ## TODO - Fix this hardcide 
 
     base_url = "https://<some-thing-here>.dwani.ai/v1"
+    
     return OpenAI(api_key="http", base_url=base_url)
 
 

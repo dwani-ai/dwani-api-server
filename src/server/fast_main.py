@@ -339,9 +339,23 @@ def get_file_status(file_id: str, db: Session = Depends(get_db)):
         updated_at=record.updated_at,
     )
 
-from fpdf import FPDF
-import os
-from io import BytesIO
+import unicodedata
+import re
+from fastapi.responses import StreamingResponse
+
+
+def clean_text(text: str) -> str:
+    """Remove control characters that can cause rendering issues."""
+    return ''.join(ch for ch in text if unicodedata.category(ch)[0] != 'C' or ch in '\n\r\t')
+
+
+def insert_soft_hyphens(text: str, max_chars: int = 30) -> str:
+    """Prevent long unbreakable strings from crashing PDF generation."""
+    def replace(match):
+        seq = match.group(0)
+        return '\u00ad'.join([seq[i:i + max_chars] for i in range(0, len(seq), max_chars)])
+    return re.sub(r'\S{' + str(max_chars + 1) + r'}', replace, text)
+
 
 @app.get("/files/{file_id}/pdf", tags=["Files"])
 def download_regenerated_pdf(file_id: str, db: Session = Depends(get_db)):
@@ -350,39 +364,39 @@ def download_regenerated_pdf(file_id: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="File not found")
 
     if record.status != FileStatus.COMPLETED or not record.extracted_text:
-        raise HTTPException(status_code=400, detail="Extracted text not available yet")
+        raise HTTPException(status_code=400, detail="Text extraction not complete or failed")
 
-    pdf = FPDF()
+    # Generate PDF in memory
+    pdf = FPDF(format='A4')
     pdf.add_page()
-    pdf.set_auto_page_break(auto=True, margin=15)
+    pdf.set_auto_page_break(auto=True, margin=20)
+    pdf.set_margins(left=20, top=20, right=20)
 
-    # === Add Unicode font (DejaVu Sans) ===
     font_path = os.path.join(os.path.dirname(__file__), "fonts", "DejaVuSans.ttf")
-    
     if not os.path.exists(font_path):
-        raise HTTPException(status_code=500, detail="Font file not found. Please add DejaVuSans.ttf to /fonts/")
+        raise HTTPException(status_code=500, detail="Font file DejaVuSans.ttf not found")
 
-    pdf.add_font("DejaVu", "", font_path, uni=True)
-    pdf.set_font("DejaVu", size=12)
+    pdf.add_font(fname=font_path, uni=True)
+    pdf.set_font("DejaVuSans", size=11)
 
-    # === Write text safely ===
-    for line in record.extracted_text.split("\n"):
-        if not line.strip():
-            pdf.ln(10)
-            continue
-        # fpdf2 handles UTF-8 directly with uni=True
-        pdf.multi_cell(0, 10, txt=line)
+    # Prepare text
+    text = clean_text(record.extracted_text)
+    text = insert_soft_hyphens(text, max_chars=30)
 
-    # === Critical: Use pdf.output() → returns bytes directly in fpdf2 ===
-    pdf_bytes = pdf.output()  # This returns bytes in fpdf2
+    # Write flowing text (safest method)
+    pdf.write(h=7, txt=text)
 
-    return FileResponse(
+    # Get bytes
+    pdf_bytes = pdf.output()  # Returns bytes in fpdf2
+
+    # === CRITICAL FIX: Use StreamingResponse, NOT FileResponse ===
+    return StreamingResponse(
         BytesIO(pdf_bytes),
         media_type="application/pdf",
-        filename=f"clean_{record.filename}",
-        headers={"Content-Disposition": f"attachment; filename=clean_{record.filename}"}
+        headers={
+            "Content-Disposition": f'attachment; filename="clean_{record.filename}"'
+        }
     )
-
 
 @app.get("/files/", tags=["Files"])
 def list_files(db: Session = Depends(get_db), limit: int = 20):

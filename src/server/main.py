@@ -1995,8 +1995,120 @@ def get_async_openai_client(model: str) -> AsyncOpenAI:
         "gpt-oss": "9500",
     }
     base_url = f"http://0.0.0.0:{model_ports[model]}/v1"
-    base_url = "https://"
+    ## TODO - Fix this hardcide 
+    base_url = "https://<some-thing-here>.dwani.ai/v1"
+
     return AsyncOpenAI(api_key="http", base_url=base_url)
+
+
+
+
+from io import BytesIO
+from typing import List, Literal, Optional
+import base64
+from pydantic import BaseModel
+
+
+#TODO 
+## handle timeout issue
+async def new_extract_text_file(pdf_file) -> str:
+    model = "gemma3"  # or whichever vision model you're using that supports multiple images + structured output
+    
+    # Convert PDF to list of PIL Images
+    images = await render_pdf_to_png(pdf_file)
+    
+    if not images:
+        return ""
+
+    # Define structured output schema
+    class PageText(BaseModel):
+        page_number: int
+        text: str
+
+    class ExtractionResult(BaseModel):
+        pages: List[PageText]
+        extraction_notes: Optional[str] = None  # ← This fixes the error
+
+    # Encode all images to base64
+    image_messages = []
+    for idx, image in enumerate(images, start=1):
+        image_bytes_io = BytesIO()
+        image.save(image_bytes_io, format='JPEG', quality=85)
+        image_bytes_io.seek(0)
+        base64_image = base64.b64encode(image_bytes_io.read()).decode('utf-8')
+        
+        image_messages.append({
+            "type": "image_url",
+            "image_url": {
+                "url": f"data:image/jpeg;base64,{base64_image}"
+            }
+        })
+
+    # System + user prompt optimized for structured extraction
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "You are an expert at extracting clean, accurate plain text from document images. "
+                "Preserve formatting clues like headings, lists, and paragraphs where possible, "
+                "but output only plain text without markdown unless structure is critical. "
+                "Extract text from each page separately and return structured results."
+            )
+        },
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "text",
+                    "text": (
+                        "Extract the full plain text from each of the following PDF pages. "
+                        "Return the text for each page in order, with page numbers starting from 1. "
+                        "Do not summarize — extract verbatim. "
+                        "If a page is blank or unreadable, return empty text for that page."
+                    )
+                },
+                *image_messages  # All images in one message
+            ]
+        }
+    ]
+
+    client = get_async_openai_client(model)
+
+    try:
+        response = await client.chat.completions.create(
+            model=model,
+            messages=messages,
+            temperature=0.0,  # Deterministic for extraction tasks
+            max_tokens=4096,  # Adjust based on expected output length
+            response_format={  # This enables structured output (OpenAI-style)
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "pdf_extraction_result",
+                    "strict": True,
+                    "schema": ExtractionResult.model_json_schema()
+                }
+            }
+        )
+
+        # Parse structured response
+        content = response.choices[0].message.content
+        result = ExtractionResult.model_validate_json(content)
+
+        # Combine text in order, with optional page separators
+        extracted_texts = []
+        for page in sorted(result.pages, key=lambda p: p.page_number):
+            extracted_texts.append(page.text.strip())
+
+        full_text = "\n\n".join(extracted_texts)  # Double newline separates pages
+
+        return full_text
+
+    except Exception as e:
+        # Fallback or error handling
+        print(f"Structured extraction failed: {e}")
+        # Optionally fall back to per-page extraction here
+        return ""  # or re-raise / handle differently
+
 
 async def extract_text_file(pdf_file):
     model="gemma3"
@@ -2071,6 +2183,117 @@ async def extract_text_page(pdf_file, page_number):
     return raw_response
 
 
+
+from fastapi import FastAPI, File, UploadFile, HTTPException
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel
+from typing import List
+import asyncio
+
+from io import BytesIO
+from PIL import Image
+import base64
+
+
+class ExtractionResponse(BaseModel):
+    extracted_text: str
+    page_count: int
+    status: str = "success"
+
+
+class ErrorResponse(BaseModel):
+    error: str
+    detail: str
+    status: str = "error"
+
+
+async def app_extract_text_from_pdf(pdf_file: UploadFile) -> str:
+    """
+    Core extraction logic based on your original async function.
+    Processes PDF pages as images and extracts text using a vision model.
+    """
+    model = "gemma3"  # or whatever vision model you're using (e.g., gpt-4o, gemma3, etc.)
+    client = get_async_openai_client(model)
+    
+    # Convert PDF pages to images
+    images: List[Image.Image] = await render_pdf_to_png(pdf_file)
+    
+    if not images:
+        raise HTTPException(status_code=400, detail="No pages found in PDF or failed to render pages")
+
+    result = ""
+    
+    for i, image in enumerate(images):
+        image_bytes_io = BytesIO()
+        image.save(image_bytes_io, format='JPEG', quality=85)
+        image_bytes_io.seek(0)
+        image_base64 = encode_image(image_bytes_io)  # or base64.b64encode(...).decode()
+
+        single_message = [
+            {
+                "type": "image_url",
+                "image_url": {"url": f"data:image/jpeg;base64,{image_base64}"}
+            },
+            {
+                "type": "text",
+                "text": f"Extract plain text from this single PDF page (page {i+1}). "
+                        "Preserve the original reading order, headings, lists, and paragraph structure as much as possible. "
+                        "Output clean plain text only."
+            }
+        ]
+
+        try:
+            response = await client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": (
+                        "You are an expert OCR and document text extraction assistant. "
+                        "Extract accurate, clean plain text from document images. "
+                        "Maintain logical reading order and structure clues (headings, bullet points, etc.) "
+                        "but do not add markdown unless absolutely necessary for clarity. "
+                        "Do not invent or hallucinate content."
+                    )},
+                    {"role": "user", "content": single_message}
+                ],
+                temperature=0.2,
+                max_tokens=2048
+            )
+            
+            page_text = response.choices[0].message.content.strip()
+            result += page_text + "\n\n"  # Separate pages with blank lines
+            
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Error processing page {i+1}: {str(e)}")
+
+    return result.strip()
+
+
+@app.post("/app-extract-text", response_model=ExtractionResponse)
+async def extract_text_endpoint(file: UploadFile = File(...)):
+    """
+    FastAPI endpoint to upload a PDF and extract plain text from it.
+    """
+    if not file.filename.lower().endswith('.pdf'):
+        raise HTTPException(status_code=400, detail="File must be a PDF")
+
+    if file.content_type != "application/pdf":
+        raise HTTPException(status_code=400, detail="Invalid file type. Please upload a valid PDF.")
+
+    try:
+        extracted_text = await app_extract_text_from_pdf(file)
+        
+        return ExtractionResponse(
+            extracted_text=extracted_text,
+            page_count=extracted_text.count('\n\n') + 1  # rough estimate
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Text extraction failed: {str(e)}")
+
+
+
 import base64
 from io import BytesIO
 from pdf2image import convert_from_path
@@ -2123,50 +2346,52 @@ async def indic_summarize_pdf_all(
 
         #text_response = await extract_text_from_pdf(file, model)
         text_response_string = await extract_text_file(file)
-        # Parse JSON response
-        '''
-        try:
-            page_contents_dict = json.loads(text_response.body.decode())["page_contents"]
-        except (json.JSONDecodeError, KeyError) as e:
-            logger.error("Failed to parse text_response: %s", str(e))
-            raise HTTPException(status_code=500, detail="Invalid OCR response format")
-
-        if not page_contents_dict:
-            raise HTTPException(status_code=500, detail="No text extracted from PDF pages")
-
-        # Convert dictionary values to a single string
-        text_response_string = "\n".join(str(value) for value in page_contents_dict.values() if value)
-        
-        if not text_response_string.strip():
-            raise HTTPException(status_code=500, detail="Extracted text is empty")
-'''
         client = get_openai_client(model)
 
-        system_prompt = f"Return the answer only in {tgt_lang} language"
-        summary_response = client.chat.completions.create(
+        # Single API call with structured JSON output
+        response = client.chat.completions.create(
             model=model,
             messages=[
                 {
                     "role": "system",
-                    "content": [{"type": "text", "text": system_prompt}]
+                    "content": "You are a multilingual summarizer. "
+                            "Always respond with valid JSON only, using exactly these keys:\n"
+                            "- 'original_summary': summary in the original language of the text (3-5 sentences)\n"
+                            "- 'translated_summary': summary in the target language specified below (3-5 sentences)\n"
+                            "Do not add any extra text or explanations."
                 },
                 {
                     "role": "user",
-                    "content": f"Summarize the following text in 3-5 sentences:\n\n{text_response_string}"
+                    "content": f"Target language for translation: {tgt_lang}\n\n"
+                            f"First, detect the language of the following text.\n"
+                            f"Then, summarize it in 3-5 sentences in its original language.\n"
+                            f"Finally, provide the same summary in {tgt_lang}.\n\n"
+                            f"Return only a JSON object with 'original_summary' and 'translated_summary'.\n\n"
+                            f"Text:\n{text_response_string}"
                 }
             ],
             temperature=0.3,
-            max_tokens=500
+            max_tokens=1000,
+            response_format={"type": "json_object"}  # Strongly enforces JSON output
         )
-        summary = summary_response.choices[0].message.content
-        
-        if not summary:
-            raise HTTPException(status_code=500, detail="Summary generation failed")
+
+        raw_content = response.choices[0].message.content.strip()
+
+        try:
+            import json
+            summaries = json.loads(raw_content)
+            original_summary = summaries.get("original_summary", "").strip()
+            translated_summary = summaries.get("translated_summary", "").strip()
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=500, detail="Failed to parse model response as JSON")
+
+        if not original_summary or not translated_summary:
+            raise HTTPException(status_code=500, detail="One or both summaries are missing")
 
         return JSONResponse(content={
             "original_text": text_response_string,
-            "summary": summary,
-            "translated_summary": summary,  # Translation logic can be added here if needed
+            "summary": original_summary,              # In the source language (auto-detected)
+            "translated_summary": translated_summary  # In tgt_lang
         })
     except Exception as e:
         logger.error("External indic custom prompt PDF API error: %s", str(e))
@@ -2648,8 +2873,9 @@ def get_openai_client(model: str) -> OpenAI:
     base_url = f"http://0.0.0.0:{model_ports[model]}/v1"
 
     ## TODO - Fix this hardcide 
-    base_url = "https://<some-thing-here>.dwani.ai"
 
+    base_url = "https://<some-thing-here>.dwani.ai/v1"
+    
     return OpenAI(api_key="http", base_url=base_url)
 
 

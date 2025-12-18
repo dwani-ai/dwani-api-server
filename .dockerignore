@@ -11,7 +11,7 @@ venv
 *.egg-info
 dist
 build
-
+*.db
 
 *.log
 venv

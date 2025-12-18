@@ -1,0 +1,35 @@
+services:
+  llama_cpp:
+    image: ghcr.io/ggml-org/llama.cpp:server-cuda
+    command:
+      - --model
+      - /models/Qwen3VL-8B-Instruct-Q8_0.gguf
+      - --mmproj
+      - /models/mmproj-Qwen3VL-8B-Instruct-Q8_0.gguf
+      - --host
+      - 0.0.0.0
+      - --port
+      - "9000"
+      - --ctx-size
+      - "24576"
+      - --n-gpu-layers
+      - "99"
+      - --batch-size
+      - "8192"
+      - --ubatch-size
+      - "512"
+      - --jinja
+      - --temp
+      - "0.7"
+    volumes:
+      - ./models:/models
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped
+    ports:
+      - "80:80"

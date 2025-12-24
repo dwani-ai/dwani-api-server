@@ -27,3 +27,4 @@ uvicorn
 python-multipart
 
 pdf2image
+fpdf2

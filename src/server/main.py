@@ -1995,8 +1995,13 @@ def get_async_openai_client(model: str) -> AsyncOpenAI:
         "gpt-oss": "9500",
     }
     base_url = f"http://0.0.0.0:{model_ports[model]}/v1"
+
+
+    base_url = f"{os.getenv('DWANI_API_BASE_URL')}"
+
+    #DWANI_API_BASE_URL_LLM_QWEN
     ## TODO - Fix this hardcide 
-    base_url = "https://<some-thing-here>.dwani.ai/v1"
+    #base_url = "https://<some-thing-here>.dwani.ai/v1"
 
     return AsyncOpenAI(api_key="http", base_url=base_url)
 
@@ -2530,34 +2535,8 @@ async def indic_custom_prompt_pdf(
     start_time = time.time()
 
     try:
-        '''
-        file_content = await file.read()
-        files = {"file": (file.filename, file_content, "application/pdf")}
-        data = {
-            "page_number": str(page_number),
-            "prompt": prompt,
-            "query_language": query_lang,
-            "target_language": tgt_lang,
-            "model": model
-        }
 
-        response = requests.post(
-            external_url,
-            files=files,
-            data=data,
-            headers={"accept": "application/json"},
-            timeout=30
-        )
-        response.raise_for_status()
-
-        response_data = response.json()
-
-        original_text = response_data.get("original_text", "")
-        query_answer = response_data.get("query_answer", "")
-        translated_query_answer = response_data.get("translated_query_answer", "")
-        '''
-
-        #original_text = await extract_text(file)
+        # original_text = await extract_text(file)
         original_text = await extract_text_page(file, page_number)
 
         if not original_text.strip():
@@ -2565,25 +2544,36 @@ async def indic_custom_prompt_pdf(
 
         client = get_openai_client(model)
 
-        system_prompt = f"Return the answer only in {tgt_lang} language"
-        summary_response = client.chat.completions.create(
+        # First: Get the answer in the original language (or model's best language)
+        answer_prompt = f"{prompt}:\n\n{original_text}"
+
+        answer_response = client.chat.completions.create(
             model=model,
             messages=[
-                {
-                    "role": "system",
-                    "content": [{"type": "text", "text": system_prompt}]
-                },
-                {
-                    "role": "user",
-                    "content": f" {prompt} :\n\n{original_text}"
-                }
+                {"role": "user", "content": answer_prompt}
             ],
             temperature=0.3,
-            max_tokens=500
+            max_tokens=500,
         )
-        query_answer = summary_response.choices[0].message.content
-        translated_query_answer = query_answer
+        query_answer = answer_response.choices[0].message.content.strip()
+
+        # Second: Translate the answer to the target language
+        translation_prompt = f"Translate the following text to {tgt_lang}. Return only the translated text, nothing else:\n\n{query_answer}"
+
+        translation_response = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "user", "content": translation_prompt}
+            ],
+            temperature=0.0,  # Low temperature for accurate translation
+            max_tokens=500,
+        )
+        translated_query_answer = translation_response.choices[0].message.content.strip()
+
         processed_page = page_number
+
+
+        logger.debug(f"Indic custom prompt PDF completed in {time.time() - start_time:.2f} seconds, page processed: {processed_page}")
 
         #processed_page = response_data.get("processed_page", page_number)
 
@@ -2595,7 +2585,6 @@ async def indic_custom_prompt_pdf(
                 translated_query_answer=translated_query_answer or "No translated response provided",
                 processed_page=processed_page
             )
-
 
         
         logger.debug(f"Indic custom prompt PDF completed in {time.time() - start_time:.2f} seconds, page processed: {processed_page}")
@@ -2875,6 +2864,7 @@ def get_openai_client(model: str) -> OpenAI:
     ## TODO - Fix this hardcide 
 
     base_url = "https://<some-thing-here>.dwani.ai/v1"
+    base_url = f"{os.getenv('DWANI_API_BASE_URL')}"
     
     return OpenAI(api_key="http", base_url=base_url)
 

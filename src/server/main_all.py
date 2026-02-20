@@ -100,9 +100,76 @@ def get_openai_client(model: str) -> OpenAI:
     return OpenAI(api_key="http", base_url=base_url)
 
 
-def encode_image(image: BytesIO) -> str:
-    """Encode image bytes to base64 string."""
-    return base64.b64encode(image.read()).decode("utf-8")
+# --- Gemini API (direct REST with API key, gemini-2.5-flash-lite) for selected endpoints ---
+GEMINI_MODEL = "gemini-2.5-flash-lite"
+GEMINI_API_BASE = "https://aiplatform.googleapis.com/v1/publishers/google/models"
+
+def _gemini_api_key() -> str:
+    key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+    if not key:
+        raise ValueError("GEMINI_API_KEY or GOOGLE_API_KEY must be set for Gemini API")
+    return key
+
+def _gemini_build_payload(
+    contents: List[Dict[str, Any]],
+    system_instruction: Optional[str] = None,
+    temperature: float = 0.2,
+    max_tokens: int = 2048,
+) -> Dict[str, Any]:
+    """Build Gemini generateContent request body."""
+    payload = {
+        "contents": contents,
+        "generationConfig": {
+            "temperature": temperature,
+            "maxOutputTokens": max_tokens,
+        },
+    }
+    if system_instruction:
+        payload["systemInstruction"] = {"parts": [{"text": system_instruction}]}
+    return payload
+
+def gemini_generate_sync(
+    contents: List[Dict[str, Any]],
+    system_instruction: Optional[str] = None,
+    temperature: float = 0.2,
+    max_tokens: int = 2048,
+) -> str:
+    """Call Gemini generateContent (sync). contents = [{"role": "user", "parts": [{"text": "..."}]}]"""
+    url = f"{GEMINI_API_BASE}/{GEMINI_MODEL}:generateContent"
+    params = {"key": _gemini_api_key()}
+    payload = _gemini_build_payload(contents, system_instruction, temperature, max_tokens)
+    resp = requests.post(url, params=params, json=payload, timeout=60)
+    resp.raise_for_status()
+    data = resp.json()
+    candidates = data.get("candidates") or []
+    if not candidates:
+        raise RuntimeError(data.get("error", {}).get("message", "No candidates in Gemini response") or str(data))
+    parts = (candidates[0].get("content") or {}).get("parts") or []
+    if not parts:
+        return ""
+    return (parts[0].get("text") or "").strip()
+
+async def gemini_generate_async(
+    contents: List[Dict[str, Any]],
+    system_instruction: Optional[str] = None,
+    temperature: float = 0.2,
+    max_tokens: int = 2048,
+) -> str:
+    """Call Gemini generateContent (async)."""
+    url = f"{GEMINI_API_BASE}/{GEMINI_MODEL}:generateContent"
+    params = {"key": _gemini_api_key()}
+    payload = _gemini_build_payload(contents, system_instruction, temperature, max_tokens)
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        resp = await client.post(url, params=params, json=payload)
+    resp.raise_for_status()
+    data = resp.json()
+    candidates = data.get("candidates") or []
+    if not candidates:
+        raise RuntimeError(data.get("error", {}).get("message", "No candidates in Gemini response") or str(data))
+    parts = (candidates[0].get("content") or {}).get("parts") or []
+    if not parts:
+        return ""
+    return (parts[0].get("text") or "").strip()
 
 
 class Settings:
@@ -202,18 +269,6 @@ SUPPORTED_LANGUAGES = [
         "rus_Cyrl", "pol_Latn"
     ]
 
-
-
-#model = YOLO("yolov8l.pt")  # example for large model with better accuracy
-
-
-def read_imagefile(file) -> np.ndarray:
-    image_bytes = file.file.read()
-    np_arr = np.frombuffer(image_bytes, np.uint8)
-    image = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
-    if image is None:
-        raise HTTPException(status_code=400, detail="Invalid image")
-    return image
 
 
 # Pydantic models (updated to include model validation)
@@ -669,22 +724,13 @@ async def chat_v2(
 
     try:
         prompt_to_process = chat_request.prompt
-
-        client = get_openai_client(chat_request.model)
-        response = client.chat.completions.create(
-            model=chat_request.model,
-            messages=[
-                {
-                    "role": "system",
-                    "content": [{"type": "text", "text": system_prompt }]
-                
-                },
-                {"role": "user", "content": [{"type": "text", "text": prompt_to_process}]}
-            ],
+        contents = [{"role": "user", "parts": [{"text": prompt_to_process}]}]
+        generated_response = gemini_generate_sync(
+            contents,
+            system_instruction=system_prompt,
             temperature=0.3,
-            max_tokens=settings.max_tokens
+            max_tokens=settings.max_tokens,
         )
-        generated_response = response.choices[0].message.content
         logger.debug(f"Generated response: {generated_response}")
 
         return ChatDirectResponse(response=generated_response)
@@ -904,32 +950,18 @@ async def translate(
 
     logger.debug(f"Received translation request: {len(request.sentences)} sentences, src_lang: {request.src_lang} ({src_name}), tgt_lang: {request.tgt_lang} ({tgt_name})")
 
-    model = "gemma3"
-    client = get_openai_client(model)
-
     system_prompt = f"You are a professional translator. Translate the following list of sentences from {src_name} to {tgt_name}. Respond ONLY with a valid JSON array of the translated sentences in the same order, without any additional text or explanations."
-    
     sentences_text = "\n".join([f"{i+1}. {sentence}" for i, sentence in enumerate(request.sentences)])
     user_prompt = f"Sentences to translate:\n\n{sentences_text}"
+    contents = [{"role": "user", "parts": [{"text": user_prompt}]}]
 
     try:
-        response = client.chat.completions.create(
-            model=model,
-            messages=[
-                {
-                    "role": "system",
-                    "content": system_prompt
-                },
-                {
-                    "role": "user",
-                    "content": user_prompt
-                }
-            ],
-            temperature=0.1,  # Low temperature for consistent translations
-            max_tokens=2000   # Adjust based on expected output length
-        )
-        
-        query_answer = response.choices[0].message.content.strip()
+        query_answer = gemini_generate_sync(
+            contents,
+            system_instruction=system_prompt,
+            temperature=0.1,
+            max_tokens=2000,
+        ).strip()
         
         # Parse the JSON array from the response
         translations = json.loads(query_answer)
@@ -1038,7 +1070,7 @@ async def visual_query(
 
     system_prompt = f"You are dwani, a helpful assistant. Answer questions considering India as base country and Karnataka as base state. Provide a concise response in one sentence maximum. Do not explain .  Return answer only in {language_name}" 
 
-    extracted_text = vision_query(img_base64, query, model, system_prompt=system_prompt)
+    extracted_text = vision_query(img_base64, query, model, system_prompt=system_prompt, use_vertex=True)
 
     response = extracted_text
 
@@ -1210,57 +1242,30 @@ async def extract_text(
     request: Request,
     file: UploadFile = File(..., description="PDF file to extract text from"),
     page_number: int = Query(1, description="Page number to extract text from (1-based indexing)", ge=1),
-    model: str = Query(default="gemma3", description="LLM model", enum=SUPPORTED_MODELS)
+    model: str = Query(default="gemma3", description="LLM model (ignored; Vertex Gemini used)", enum=SUPPORTED_MODELS)
 ):
     if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files supported")
     if page_number < 1:
         raise HTTPException(status_code=400, detail="Page number must be at least 1")
 
-    validate_model(model)
-
-    logger.debug("Processing PDF text extraction request", extra={
+    logger.debug("Processing PDF text extraction request (Vertex AI)", extra={
         "endpoint": "/v1/extract-text",
         "file_name": file.filename,
         "page_number": page_number,
-        "model": model,
         "client_ip": request.client.host
     })
 
-    external_url = f"{os.getenv('DWANI_API_BASE_URL_PDF')}/extract-text/"
     start_time = time.time()
-
     try:
-        file_content = await file.read()
-        files = {"file": (file.filename, file_content, file.content_type)}
-        data = {"page_number": page_number, "model": model}
-        response = requests.post(
-            external_url,
-            files=files,
-            data=data,
-            headers={"accept": "application/json"},
-            timeout=30
-        )
-        response.raise_for_status()
-
-        response_data = response.json()
-        extracted_text = response_data.get("page_content", "")
-        if not extracted_text:
-            logger.warning("No page_content found in external API response")
-            extracted_text = ""
-
+        page_content = await extract_text_page_vertex(file, page_number)
         logger.debug(f"PDF text extraction completed in {time.time() - start_time:.2f} seconds")
-        return PDFTextExtractionResponse(page_content=extracted_text.strip())
-
-    except requests.Timeout:
-        logger.error("External PDF extraction API timed out")
-        raise HTTPException(status_code=504, detail="External API timeout")
-    except requests.RequestException as e:
-        logger.error(f"External PDF extraction API error: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"External API error: {str(e)}")
-    except ValueError as e:
-        logger.error(f"Invalid JSON response from external API: {str(e)}")
-        raise HTTPException(status_code=500, detail="Invalid response format from external API")
+        return PDFTextExtractionResponse(page_content=page_content.strip())
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Vertex PDF extraction error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Extract text failed: {str(e)}")
     
 
 @app.post("/v1/extract-text-all",
@@ -1678,55 +1683,6 @@ from pdf2image import convert_from_path
 from io import BytesIO
 
 
-def encode_image(image: BytesIO) -> str:
-    """Encode image bytes to base64 string."""
-    return base64.b64encode(image.read()).decode("utf-8")
-
-async def get_base64_msg_from_pdf(file):
-    try:
-        images = await render_pdf_to_png(file)
-    except Exception as e:
-        logger.error(f"Failed to render PDF to PNG: {str(e)}")
-        return []
-
-    messages = []
-    for i, image in enumerate(images):
-        try:
-            # Ensure the image is in RGB mode (required for JPEG)
-            if image.mode != "RGB":
-                image = image.convert("RGB")
-            
-            # Save image to BytesIO as JPEG
-            image_bytes_io = BytesIO()
-            image.save(image_bytes_io, format="JPEG", quality=85)
-            image_bytes_io.seek(0)
-            
-            # Encode to base64
-            image_bytes = image_bytes_io.read()
-            image_base64 = base64.b64encode(image_bytes).decode("utf-8")
-            
-            # Validate base64 string
-            try:
-                base64.b64decode(image_base64, validate=True)
-            except Exception as e:
-                logger.error(f"Invalid base64 string for page {i}: {str(e)}")
-                continue
-            
-            # Create message (adjust based on vLLM's expected format)
-            messages.append({
-                "type": "image_url",
-                # Option 1: Include data URI (if vLLM supports it)
-                "image_url": {"url": f"data:image/jpeg;base64,{image_base64}"}
-                # Option 2: Raw base64 string (uncomment if vLLM expects this)
-                # "image_url": {"url": image_base64}
-            })
-        except Exception as e:
-            logger.error(f"Image processing failed for page {i}: {str(e)}")
-            continue
-    
-    return messages
-
-
 async def render_pdf_to_png(pdf_file):
 
     # Save uploaded file temporarily
@@ -1742,193 +1698,6 @@ async def render_pdf_to_png(pdf_file):
             os.remove("temp.pdf")
 
     return images
-
-
-import re
-
-def sanitize_json_string(s: str) -> str:
-    """Sanitize a string to ensure it is valid for JSON parsing."""
-    if not s:
-        return "{}"  # Return empty JSON object if input is empty
-    # Replace control characters with escaped Unicode
-    s = re.sub(r'[\x00-\x1F\x7F]', lambda m: '\\u{:04x}'.format(ord(m.group())), s)
-    # Remove newlines/tabs outside of string values (before/after braces, brackets, etc.)
-    s = re.sub(r'[\n\t]+(?=[\{\[\]\},:0-9])', ' ', s)
-    # Remove trailing commas before closing braces/brackets
-    s = re.sub(r',\s*([\]\}])', r'\1', s)
-    # Ensure the string starts with a valid JSON structure
-    s = s.strip()
-    if not s.startswith('{') and not s.startswith('['):
-        s = '{' + s + '}'
-    return s
-
-
-
-async def extract_text_from_pdf(file: UploadFile = File(...), model: str = Body("gemma3", embed=True)) -> JSONResponse:
-    """Extract text from all PDF pages one at a time."""
-    try:
-        if not file.filename.lower().endswith(".pdf"):
-            raise HTTPException(status_code=400, detail="Only PDF files supported.")
-
-        validate_model(model)  # Validate model
-        ocr_query_string = "Return the plain text extracted from this image."
-
-        # Read PDF and convert to base64 images
-        pages = await get_base64_msg_from_pdf(file)
-        page_contents = {}
-
-        client = get_openai_client(model)
-        
-        for page_num, base64_image in enumerate(pages):
-            try:
-                response = await client.chat.completions.create(
-                    model=model,
-                    messages=[
-                        {
-                            "role": "user",
-                            "content": [
-                                {
-                                    "type": "image_url",
-                                    "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}
-                                },
-                                {"type": "text", "text": ocr_query_string}
-                            ]
-                        }
-                    ],
-                    temperature=0.2,
-                    max_tokens=4096
-                )
-                
-                text = response.choices[0].message.content
-                if not text.strip():
-                    logger.warning(f"No text extracted for page {page_num}")
-                    page_contents[str(page_num)] = ""
-                else:
-                    page_contents[str(page_num)] = text
-                
-            #except openai.OpenAIError as e:
-            #    logger.error(f"OpenAI API error for page {page_num}: {str(e)}")
-            #    page_contents[str(page_num)] = ""
-            except Exception as e:
-                logger.error(f"Unexpected error processing page {page_num}: {str(e)}")
-                page_contents[str(page_num)] = ""
-
-        return JSONResponse(content={"page_contents": page_contents})
-
-    except Exception as e:
-        logger.error(f"Error in extract_text_from_pdf: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
-    finally:
-        await file.close()    
-
-
-
-
-from io import BytesIO
-from typing import List, Literal, Optional
-import base64
-from pydantic import BaseModel
-
-
-#TODO 
-## handle timeout issue
-async def new_extract_text_file(pdf_file) -> str:
-    model = "gemma3"  # or whichever vision model you're using that supports multiple images + structured output
-    
-    # Convert PDF to list of PIL Images
-    images = await render_pdf_to_png(pdf_file)
-    
-    if not images:
-        return ""
-
-    # Define structured output schema
-    class PageText(BaseModel):
-        page_number: int
-        text: str
-
-    class ExtractionResult(BaseModel):
-        pages: List[PageText]
-        extraction_notes: Optional[str] = None  # ← This fixes the error
-
-    # Encode all images to base64
-    image_messages = []
-    for idx, image in enumerate(images, start=1):
-        image_bytes_io = BytesIO()
-        image.save(image_bytes_io, format='JPEG', quality=85)
-        image_bytes_io.seek(0)
-        base64_image = base64.b64encode(image_bytes_io.read()).decode('utf-8')
-        
-        image_messages.append({
-            "type": "image_url",
-            "image_url": {
-                "url": f"data:image/jpeg;base64,{base64_image}"
-            }
-        })
-
-    # System + user prompt optimized for structured extraction
-    messages = [
-        {
-            "role": "system",
-            "content": (
-                "You are an expert at extracting clean, accurate plain text from document images. "
-                "Preserve formatting clues like headings, lists, and paragraphs where possible, "
-                "but output only plain text without markdown unless structure is critical. "
-                "Extract text from each page separately and return structured results."
-            )
-        },
-        {
-            "role": "user",
-            "content": [
-                {
-                    "type": "text",
-                    "text": (
-                        "Extract the full plain text from each of the following PDF pages. "
-                        "Return the text for each page in order, with page numbers starting from 1. "
-                        "Do not summarize — extract verbatim. "
-                        "If a page is blank or unreadable, return empty text for that page."
-                    )
-                },
-                *image_messages  # All images in one message
-            ]
-        }
-    ]
-
-    client = get_async_openai_client(model)
-
-    try:
-        response = await client.chat.completions.create(
-            model=model,
-            messages=messages,
-            temperature=0.0,  # Deterministic for extraction tasks
-            max_tokens=4096,  # Adjust based on expected output length
-            response_format={  # This enables structured output (OpenAI-style)
-                "type": "json_schema",
-                "json_schema": {
-                    "name": "pdf_extraction_result",
-                    "strict": True,
-                    "schema": ExtractionResult.model_json_schema()
-                }
-            }
-        )
-
-        # Parse structured response
-        content = response.choices[0].message.content
-        result = ExtractionResult.model_validate_json(content)
-
-        # Combine text in order, with optional page separators
-        extracted_texts = []
-        for page in sorted(result.pages, key=lambda p: p.page_number):
-            extracted_texts.append(page.text.strip())
-
-        full_text = "\n\n".join(extracted_texts)  # Double newline separates pages
-
-        return full_text
-
-    except Exception as e:
-        # Fallback or error handling
-        print(f"Structured extraction failed: {e}")
-        # Optionally fall back to per-page extraction here
-        return ""  # or re-raise / handle differently
 
 
 async def extract_text_file(pdf_file):
@@ -1964,6 +1733,29 @@ async def extract_text_file(pdf_file):
         raw_response = response.choices[0].message.content
         result = result + " " + raw_response
     
+    return result
+
+
+async def extract_text_file_vertex(pdf_file) -> str:
+    """Extract text from all PDF pages using Gemini API (for /v1/indic-summarize-pdf-all)."""
+    images = await render_pdf_to_png(pdf_file)
+    result = ""
+    for image in images:
+        image_bytes_io = BytesIO()
+        image.save(image_bytes_io, format="JPEG", quality=85)
+        image_bytes_io.seek(0)
+        image_base64 = encode_image(image_bytes_io)
+        contents = [
+            {
+                "role": "user",
+                "parts": [
+                    {"inlineData": {"mimeType": "image/jpeg", "data": image_base64}},
+                    {"text": "Extract plain text from this single PDF page. Preserve reading order and structure."},
+                ],
+            }
+        ]
+        raw_response = await gemini_generate_async(contents, temperature=0.2, max_tokens=2048)
+        result = result + " " + (raw_response or "")
     return result
 
 async def extract_text_page(pdf_file, page_number):
@@ -2003,6 +1795,27 @@ async def extract_text_page(pdf_file, page_number):
     
     return raw_response
 
+
+async def extract_text_page_vertex(pdf_file, page_number: int) -> str:
+    """Extract text from a single PDF page using Gemini API (for /v1/extract-text)."""
+    images = await render_pdf_to_png(pdf_file)
+    if page_number < 1 or page_number > len(images):
+        raise HTTPException(status_code=400, detail=f"Page number must be between 1 and {len(images)}")
+    image = images[page_number - 1]
+    image_bytes_io = BytesIO()
+    image.save(image_bytes_io, format="JPEG", quality=85)
+    image_bytes_io.seek(0)
+    image_base64 = encode_image(image_bytes_io)
+    contents = [
+        {
+            "role": "user",
+            "parts": [
+                {"inlineData": {"mimeType": "image/jpeg", "data": image_base64}},
+                {"text": "Extract plain text from this single PDF page. Preserve reading order and structure."},
+            ],
+        }
+    ]
+    return await gemini_generate_async(contents, temperature=0.2, max_tokens=2048) or ""
 
 
 from fastapi import FastAPI, File, UploadFile, HTTPException
@@ -2114,30 +1927,6 @@ async def extract_text_endpoint(file: UploadFile = File(...)):
         raise HTTPException(status_code=500, detail=f"Text extraction failed: {str(e)}")
 
 
-
-import base64
-from io import BytesIO
-from pdf2image import convert_from_path
-import os
-import asyncio
-import re
-
-async def render_pdf_to_png(pdf_file):
-    """Convert PDF to images."""
-    try:
-        with open("temp.pdf", "wb") as f:
-            f.write(await pdf_file.read())
-        images = convert_from_path("temp.pdf")
-    except Exception as e:
-        logger.error(f"PDF conversion failed: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Failed to convert PDF to images: {str(e)}")
-    finally:
-        if os.path.exists("temp.pdf"):
-            os.remove("temp.pdf")
-
-    return images
-
-
 @app.post("/v1/indic-summarize-pdf-all",
           response_model=IndicSummarizeAllPDFResponse,
           summary="Summarize and Translate a Specific Page of a PDF",
@@ -2165,38 +1954,29 @@ async def indic_summarize_pdf_all(
         validate_model(model)
         validate_language(tgt_lang, "target language")
 
-        #text_response = await extract_text_from_pdf(file, model)
-        text_response_string = await extract_text_file(file)
-        client = get_openai_client(model)
-
-        # Single API call with structured JSON output
-        response = client.chat.completions.create(
-            model=model,
-            messages=[
-                {
-                    "role": "system",
-                    "content": "You are a multilingual summarizer. "
-                            "Always respond with valid JSON only, using exactly these keys:\n"
-                            "- 'original_summary': summary in the original language of the text (3-5 sentences)\n"
-                            "- 'translated_summary': summary in the target language specified below (3-5 sentences)\n"
-                            "Do not add any extra text or explanations."
-                },
-                {
-                    "role": "user",
-                    "content": f"Target language for translation: {tgt_lang}\n\n"
-                            f"First, detect the language of the following text.\n"
-                            f"Then, summarize it in 3-5 sentences in its original language.\n"
-                            f"Finally, provide the same summary in {tgt_lang}.\n\n"
-                            f"Return only a JSON object with 'original_summary' and 'translated_summary'.\n\n"
-                            f"Text:\n{text_response_string}"
-                }
-            ],
+        text_response_string = await extract_text_file_vertex(file)
+        system_instruction = (
+            "You are a multilingual summarizer. "
+            "Always respond with valid JSON only, using exactly these keys:\n"
+            "- 'original_summary': summary in the original language of the text (3-5 sentences)\n"
+            "- 'translated_summary': summary in the target language specified below (3-5 sentences)\n"
+            "Do not add any extra text or explanations."
+        )
+        user_text = (
+            f"Target language for translation: {tgt_lang}\n\n"
+            f"First, detect the language of the following text.\n"
+            f"Then, summarize it in 3-5 sentences in its original language.\n"
+            f"Finally, provide the same summary in {tgt_lang}.\n\n"
+            f"Return only a JSON object with 'original_summary' and 'translated_summary'.\n\n"
+            f"Text:\n{text_response_string}"
+        )
+        contents = [{"role": "user", "parts": [{"text": user_text}]}]
+        raw_content = gemini_generate_sync(
+            contents,
+            system_instruction=system_instruction,
             temperature=0.3,
             max_tokens=1000,
-            response_format={"type": "json_object"}  # Strongly enforces JSON output
-        )
-
-        raw_content = response.choices[0].message.content.strip()
+        ).strip()
 
         try:
             import json
@@ -2576,32 +2356,40 @@ def ocr_page_with_rolm_query(img_base64: str, query:str,  model: str) -> str:
         raise HTTPException(status_code=500, detail=f"OCR processing failed: {str(e)}")
 
 
-def vision_query(img_base64: str, user_query:str,  model: str, system_prompt:str) -> str:
-    """Perform OCR on the provided base64 image using the specified model."""
-
+def vision_query(img_base64: str, user_query:str,  model: str, system_prompt:str, use_vertex: bool = False) -> str:
+    """Perform vision/OCR on the provided base64 image. When use_vertex=True, uses Gemini API (e.g. for /v1/indic_visual_query)."""
     try:
+        if use_vertex:
+            contents = [
+                {
+                    "role": "user",
+                    "parts": [
+                        {"inlineData": {"mimeType": "image/png", "data": img_base64}},
+                        {"text": user_query},
+                    ],
+                }
+            ]
+            return gemini_generate_sync(
+                contents,
+                system_instruction=system_prompt,
+                temperature=0.2,
+                max_tokens=4096,
+            )
         client = get_openai_client(model)
         response = client.chat.completions.create(
             model=model,
             messages=[
-                {
-                    "role": "system",
-                    "content": [{"type": "text", "text": system_prompt }]
-                
-                },
+                {"role": "system", "content": [{"type": "text", "text": system_prompt}]},
                 {
                     "role": "user",
                     "content": [
-                        {
-                            "type": "image_url",
-                            "image_url": {"url": f"data:image/png;base64,{img_base64}"}
-                        },
-                        {"type": "text", "text": user_query}
-                    ]
-                }
+                        {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img_base64}"}},
+                        {"type": "text", "text": user_query},
+                    ],
+                },
             ],
             temperature=0.2,
-            max_tokens=4096
+            max_tokens=4096,
         )
         return response.choices[0].message.content
     except Exception as e:

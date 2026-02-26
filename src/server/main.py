@@ -946,72 +946,6 @@ async def translate(
         logger.error(f"Error during translation: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Translation failed: {str(e)}")
 
-'''
-@app.post("/v1/translate", 
-          response_model=TranslationResponse,
-          summary="Translate Text",
-          description="Translate a list of sentences from a source to a target language.",
-          tags=["Translation"],
-          responses={
-              200: {"description": "Translation result", "model": TranslationResponse},
-              400: {"description": "Invalid sentences or languages"},
-              500: {"description": "Translation service error"},
-              504: {"description": "Translation service timeout"}
-          })
-async def translate(
-    request: TranslationRequest
-):
-    # Validate inputs
-    if not request.sentences:
-        raise HTTPException(status_code=400, detail="Sentences cannot be empty")
-    
-    # Validate language codes
-
-    if request.src_lang not in SUPPORTED_LANGUAGES or request.tgt_lang not in SUPPORTED_LANGUAGES:
-        raise HTTPException(status_code=400, detail=f"Unsupported language codes: src={request.src_lang}, tgt={request.tgt_lang}")
-
-    logger.debug(f"Received translation request: {len(request.sentences)} sentences, src_lang: {request.src_lang}, tgt_lang: {request.tgt_lang}")
-
-    external_url = f"{os.getenv('DWANI_API_BASE_URL_TRANSLATE')}"
-
-    payload = {
-        "sentences": request.sentences,
-        "src_lang": request.src_lang,
-        "tgt_lang": request.tgt_lang
-    }
-
-    try:
-        response = requests.post(
-            f"{external_url}/translate?src_lang={request.src_lang}&tgt_lang={request.tgt_lang}",
-            json=payload,
-            headers={
-                "accept": "application/json",
-                "Content-Type": "application/json"
-            },
-            timeout=30
-        )
-        response.raise_for_status()
-
-        response_data = response.json()
-        translations = response_data.get("translations", [])
-        ''''''
-        if not translations or len(translations) != len(request.sentences):
-            logger.warning(f"Unexpected response format: {response_data}")
-            raise HTTPException(status_code=500, detail="Invalid response from translation service")
-
-        logger.debug(f"Translation successful: {translations}")
-        return TranslationResponse(translations=translations)
-
-    except requests.Timeout:
-        logger.error("Translation request timed out")
-        raise HTTPException(status_code=504, detail="Translation service timeout")
-    except requests.RequestException as e:
-        logger.error(f"Error during translation: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Translation failed: {str(e)}")
-    except ValueError as e:
-        logger.error(f"Invalid JSON response: {str(e)}")
-        raise HTTPException(status_code=500, detail="Invalid response format from translation service")
-'''
 from pydantic import BaseModel, ConfigDict
 
 class VisualQueryResponse(BaseModel):
@@ -1788,27 +1722,6 @@ async def get_base64_msg_from_pdf(file):
     
     return messages
 
-'''
-async def get_base64_msg_from_pdf(file):
-    images = await render_pdf_to_png(file)
-
-    messages = []
-    for i, image in enumerate(images):
-        try:
-            image_bytes_io = BytesIO()
-            image.save(image_bytes_io, format='JPEG', quality=85)
-            image_bytes_io.seek(0)
-            image_base64 = base64.b64encode(image_bytes_io.read()).decode("utf-8")
-            messages.append({
-                "type": "image_url",
-                "image_url": {"url": f"data:image/jpeg;base64,{image_base64}"}
-            })
-        except Exception as e:
-            logger.error(f"Image processing failed for page {i}: {str(e)}")
-            continue
-    return messages
-    
-'''
 
 async def render_pdf_to_png(pdf_file):
 
@@ -2003,106 +1916,6 @@ from typing import List, Literal, Optional
 import base64
 from pydantic import BaseModel
 
-
-#TODO 
-## handle timeout issue
-async def new_extract_text_file(pdf_file) -> str:
-    model = "gemma3"  # or whichever vision model you're using that supports multiple images + structured output
-    
-    # Convert PDF to list of PIL Images
-    images = await render_pdf_to_png(pdf_file)
-    
-    if not images:
-        return ""
-
-    # Define structured output schema
-    class PageText(BaseModel):
-        page_number: int
-        text: str
-
-    class ExtractionResult(BaseModel):
-        pages: List[PageText]
-        extraction_notes: Optional[str] = None  # ← This fixes the error
-
-    # Encode all images to base64
-    image_messages = []
-    for idx, image in enumerate(images, start=1):
-        image_bytes_io = BytesIO()
-        image.save(image_bytes_io, format='JPEG', quality=85)
-        image_bytes_io.seek(0)
-        base64_image = base64.b64encode(image_bytes_io.read()).decode('utf-8')
-        
-        image_messages.append({
-            "type": "image_url",
-            "image_url": {
-                "url": f"data:image/jpeg;base64,{base64_image}"
-            }
-        })
-
-    # System + user prompt optimized for structured extraction
-    messages = [
-        {
-            "role": "system",
-            "content": (
-                "You are an expert at extracting clean, accurate plain text from document images. "
-                "Preserve formatting clues like headings, lists, and paragraphs where possible, "
-                "but output only plain text without markdown unless structure is critical. "
-                "Extract text from each page separately and return structured results."
-            )
-        },
-        {
-            "role": "user",
-            "content": [
-                {
-                    "type": "text",
-                    "text": (
-                        "Extract the full plain text from each of the following PDF pages. "
-                        "Return the text for each page in order, with page numbers starting from 1. "
-                        "Do not summarize — extract verbatim. "
-                        "If a page is blank or unreadable, return empty text for that page."
-                    )
-                },
-                *image_messages  # All images in one message
-            ]
-        }
-    ]
-
-    client = get_async_openai_client(model)
-
-    try:
-        response = await client.chat.completions.create(
-            model=model,
-            messages=messages,
-            temperature=0.0,  # Deterministic for extraction tasks
-            max_tokens=4096,  # Adjust based on expected output length
-            response_format={  # This enables structured output (OpenAI-style)
-                "type": "json_schema",
-                "json_schema": {
-                    "name": "pdf_extraction_result",
-                    "strict": True,
-                    "schema": ExtractionResult.model_json_schema()
-                }
-            }
-        )
-
-        # Parse structured response
-        content = response.choices[0].message.content
-        result = ExtractionResult.model_validate_json(content)
-
-        # Combine text in order, with optional page separators
-        extracted_texts = []
-        for page in sorted(result.pages, key=lambda p: p.page_number):
-            extracted_texts.append(page.text.strip())
-
-        full_text = "\n\n".join(extracted_texts)  # Double newline separates pages
-
-        return full_text
-
-    except Exception as e:
-        # Fallback or error handling
-        print(f"Structured extraction failed: {e}")
-        # Optionally fall back to per-page extraction here
-        return ""  # or re-raise / handle differently
 
 
 async def extract_text_file(pdf_file):
@@ -2642,18 +2455,6 @@ async def indic_custom_prompt_pdf_all(
     text_response = await extract_text_file(file)
 
     
-    # Parse JSON response
-    '''
-    try:
-        page_contents_dict = json.loads(text_response.body.decode())["page_contents"]
-    except (json.JSONDecodeError, KeyError) as e:
-        logger.error("Failed to parse text_response: %s", str(e))
-        raise HTTPException(status_code=500, detail="Invalid OCR response format")
-
-
-    if not page_contents_dict:
-        raise HTTPException(status_code=500, detail="No text extracted from PDF pages")
-    '''
     try:
     # Convert dictionary values to a single string
         text_response_string = text_response
@@ -2708,14 +2509,6 @@ async def indic_custom_prompt_pdf_all(
         logger.error("External indic custom prompt PDF API timed out")
     raise HTTPException(status_code=504, detail="External API timeout")
 
-'''
-    except requests.RequestException as e:
-        logger.error(f"External indic custom prompt PDF API error: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"External API error: {str(e)}")
-    except ValueError as e:
-        logger.error(f"Invalid JSON response from external API: {str(e)}")
-        raise HTTPException(status_code=500, detail="Invalid response format from external API")
-'''
 
 @app.post("/v1/indic-custom-prompt-kannada-pdf",
           summary="Generate Kannada PDF with Custom Prompt",

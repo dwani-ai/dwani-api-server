@@ -51,6 +51,8 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped
+    environment:
+      - HF_TOKEN
     deploy:
       resources:
         reservations:

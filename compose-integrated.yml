@@ -12,7 +12,7 @@ services:
       - HF_TOKEN=hf_this_is_a_valid_token_for_not_google
       - API_KEY_SECRET=dwani-very-secret-key-please-dont-tell-anyone
       - CHAT_RATE_LIMIT=100/minute
-      - DWANI_API_BASE_URL_LLM=http://vllm-server:10802
+      - DWANI_API_BASE_URL_LLM=http://vllm-server:10802/v1
       - DWANI_API_BASE_URL_TTS=http://tts-indic-server:10804
       - DWANI_API_BASE_URL_ASR=http://asr-indic-server:10803
       - DWANI_API_BASE_URL_TRANSLATE=http://host.docker.internal:7862

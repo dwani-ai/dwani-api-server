@@ -926,22 +926,60 @@ async def translate(
             temperature=0.1,  # Low temperature for consistent translations
             max_tokens=2000   # Adjust based on expected output length
         )
-        
+
         query_answer = response.choices[0].message.content.strip()
-        
-        # Parse the JSON array from the response
-        translations = json.loads(query_answer)
-        
-        if not isinstance(translations, list) or len(translations) != len(request.sentences):
-            logger.warning(f"Unexpected response format: {query_answer}")
+
+        # Parse and normalize the JSON array from the response into List[str]
+        try:
+            data = json.loads(query_answer)
+        except json.JSONDecodeError:
+            # Fallback: treat whole response as single translation string
+            logger.warning(f"Non-JSON response from translation model, using raw text: {query_answer}")
+            translations = [query_answer]
+        else:
+            translations = []
+            if isinstance(data, list):
+                if all(isinstance(item, str) for item in data):
+                    translations = data
+                elif all(isinstance(item, dict) for item in data):
+                    possible_keys = ["translation", "translated", "tgt", "text", "tr"]
+                    for item in data:
+                        value = None
+                        for key in possible_keys:
+                            if key in item and isinstance(item[key], str):
+                                value = item[key]
+                                break
+                        if value is None:
+                            logger.warning(f"Could not extract translation from item: {item}")
+                            raise HTTPException(status_code=500, detail="Invalid response format from translation model")
+                        translations.append(value)
+                else:
+                    logger.warning(f"Unexpected item types in response: {data}")
+                    raise HTTPException(status_code=500, detail="Invalid response format from translation model")
+            elif isinstance(data, str):
+                # Model returned a plain string, wrap it
+                translations = [data]
+            elif isinstance(data, dict) and "translations" in data and isinstance(data["translations"], list):
+                inner = data["translations"]
+                if all(isinstance(item, str) for item in inner):
+                    translations = inner
+                else:
+                    logger.warning(f"Unexpected item types in 'translations' field: {inner}")
+                    raise HTTPException(status_code=500, detail="Invalid response format from translation model")
+            else:
+                logger.warning(f"Unexpected response format (not list/str/dict[translations]): {data}")
+                raise HTTPException(status_code=500, detail="Invalid response format from translation model")
+
+        if len(translations) != len(request.sentences):
+            logger.warning(f"Unexpected response length: {translations}")
             raise HTTPException(status_code=500, detail="Invalid response format from translation model")
-        
+
         logger.debug(f"Translation successful: {translations}")
         return TranslationResponse(translations=translations)
-        
-    except json.JSONDecodeError as e:
-        logger.error(f"Failed to parse JSON response: {str(e)}")
-        raise HTTPException(status_code=500, detail="Invalid response format from translation model")
+
+    except HTTPException:
+        # Re-raise HTTPExceptions we raised above without wrapping
+        raise
     except Exception as e:
         logger.error(f"Error during translation: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Translation failed: {str(e)}")

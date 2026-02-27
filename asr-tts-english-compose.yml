@@ -1,0 +1,33 @@
+services:
+  speaches:
+    ports:
+      - 8000:8000
+    image: ghcr.io/speaches-ai/speaches:latest-cuda-12.6.3
+    build:
+      args:
+        BASE_IMAGE: nvidia/cuda:12.6.3-cudnn-runtime-ubuntu24.04
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+  speaches-init:
+    image: curlimages/curl:latest
+    depends_on:
+      - speaches
+    entrypoint: >
+      sh -c "
+      until curl -sSf http://speaches:8000/health >/dev/null 2>&1; do
+        echo 'Waiting for speaches...';
+        sleep 2;
+      done;
+      curl -X POST
+        'http://speaches:8000/v1/models/Systran/faster-whisper-small'
+        -H 'accept: application/json'
+        -d '' &&
+      curl -X POST
+        'http://speaches:8000/v1/models/speaches-ai/Kokoro-82M-v1.0-ONNX'
+        -H 'accept: application/json'
+        -d ''"

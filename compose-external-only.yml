@@ -21,6 +21,8 @@ services:
       - ENCRYPTION_KEY=tete
       - DEFAULT_ADMIN_USER=this_is_default_amdin
       - DEFAULT_ADMIN_PASSWORD=not_default_admin
+    extra_hosts:
+      - "host.docker.internal:host-gateway"  # Allows access to host's localhost
     restart: unless-stopped
   asr-indic-server:
     image: dwani/asr-indic-server:latest
@@ -30,6 +32,8 @@ services:
       - "10803:10803"
     environment:
       - HF_TOKEN
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     restart: unless-stopped
     deploy:
           resources:
@@ -44,6 +48,8 @@ services:
       - ~/.cache/huggingface:/root/.cache/huggingface
     ports:
       - "10804:10804"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     restart: unless-stopped
     environment:
       - HF_TOKEN

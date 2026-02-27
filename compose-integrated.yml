@@ -29,7 +29,7 @@ services:
     volumes:
       - ~/.cache/huggingface:/root/.cache/huggingface
     ports:
-      - 10803:10803
+      - "10803:10803"
     environment:
       - HF_TOKEN
     extra_hosts:

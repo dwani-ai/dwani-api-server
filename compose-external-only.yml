@@ -53,6 +53,7 @@ services:
     restart: unless-stopped
     environment:
       - HF_TOKEN
+      - TTS_NFE_STEPS=8
     deploy:
       resources:
         reservations:

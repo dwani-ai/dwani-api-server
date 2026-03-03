@@ -138,8 +138,84 @@ SUPPORTED_LANGUAGES = [
         "deu_Latn", "fra_Latn", "nld_Latn", "spa_Latn", "ita_Latn", "por_Latn",
         "rus_Cyrl", "pol_Latn"
     ]
+from pydantic import BaseModel, Field, ConfigDict
 
+class TranscriptionResponse(BaseModel):
+    text: str = Field(..., description="Transcribed text from the audio")
 
+    model_config = ConfigDict(
+        json_schema_extra={"example": {"text": "Hello, how are you?"}}
+    )
+
+import httpx
+@app.post("/v1/transcribe/", 
+          response_model=TranscriptionResponse,
+          summary="Transcribe Audio File",
+          description="Transcribe an audio file into text in the specified language.",
+          tags=["Audio"],
+          responses={
+              200: {"description": "Transcription result", "model": TranscriptionResponse},
+              400: {"description": "Invalid audio or language"},
+              504: {"description": "Transcription service timeout"}
+          })
+async def transcribe_audio(
+    file: UploadFile = File(..., description="Audio file to transcribe"),
+    language: str = Query(..., description="Language of the audio (kannada, hindi, tamil, english, german)")
+):
+    # Validate language
+    allowed_languages = ["kannada", "hindi", "tamil", "english","german", "telugu" , "marathi" ]
+    if language not in allowed_languages:
+        raise HTTPException(status_code=400, detail=f"Language must be one of {allowed_languages}")
+    
+    start_time = time.time()
+   
+    if( language in ["english", "german"]):
+        
+        file_content = await file.read()
+        files = {"file": (file.filename, file_content, file.content_type),
+#                'model': (None, 'Systran/faster-whisper-large-v3')
+                'model': (None, 'Systran/faster-whisper-small')
+        }
+        
+        response = httpx.post('http://localhost:8000/v1/audio/transcriptions', files=files, timeout=30.0)
+
+        if response.status_code == 200:
+            transcription = response.json().get("text", "")
+            if transcription:
+                logger.debug(f"Transcription completed in {time.time() - start_time:.2f} seconds")
+                return TranscriptionResponse(text=transcription)
+            else:
+                logger.debug("Transcription empty, try again.")
+                raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")
+        else:
+            logger.debug(f"Transcription error: {response.status_code} - {response.text}")
+            raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")
+    else: 
+        try:
+            file_content = await file.read()
+            files = {"file": (file.filename, file_content, file.content_type)}
+            
+            external_url = f"{os.getenv('DWANI_API_BASE_URL_ASR')}/transcribe/?language={language}"
+            
+            response = requests.post(
+                external_url,
+                files=files,
+                headers={"accept": "application/json"},
+                timeout=30
+            )
+            response.raise_for_status()
+            
+            transcription = response.json().get("text", "")
+            logger.debug(f"Transcription completed in {time.time() - start_time:.2f} seconds")
+            return TranscriptionResponse(text=transcription)
+        
+        except requests.Timeout:
+            logger.error("Transcription service timed out")
+            raise HTTPException(status_code=504, detail="Transcription service timeout")
+        except requests.RequestException as e:
+            logger.error(f"Transcription request failed: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")
+        
 
 #model = YOLO("yolov8l.pt")  # example for large model with better accuracy
 
@@ -777,74 +853,6 @@ async def chat_direct(
         logger.error(f"Error processing request: {str(e)}")
         raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
 
-import httpx
-@app.post("/v1/transcribe/", 
-          response_model=TranscriptionResponse,
-          summary="Transcribe Audio File",
-          description="Transcribe an audio file into text in the specified language.",
-          tags=["Audio"],
-          responses={
-              200: {"description": "Transcription result", "model": TranscriptionResponse},
-              400: {"description": "Invalid audio or language"},
-              504: {"description": "Transcription service timeout"}
-          })
-async def transcribe_audio(
-    file: UploadFile = File(..., description="Audio file to transcribe"),
-    language: str = Query(..., description="Language of the audio (kannada, hindi, tamil, english, german)")
-):
-    # Validate language
-    allowed_languages = ["kannada", "hindi", "tamil", "english","german", "telugu" , "marathi" ]
-    if language not in allowed_languages:
-        raise HTTPException(status_code=400, detail=f"Language must be one of {allowed_languages}")
-    
-    start_time = time.time()
-   
-    if( language in ["english", "german"]):
-        
-        file_content = await file.read()
-        files = {"file": (file.filename, file_content, file.content_type),
-#                'model': (None, 'Systran/faster-whisper-large-v3')
-                'model': (None, 'Systran/faster-whisper-small')
-        }
-        
-        response = httpx.post('http://localhost:8000/v1/audio/transcriptions', files=files, timeout=30.0)
-
-        if response.status_code == 200:
-            transcription = response.json().get("text", "")
-            if transcription:
-                logger.debug(f"Transcription completed in {time.time() - start_time:.2f} seconds")
-                return TranscriptionResponse(text=transcription)
-            else:
-                logger.debug("Transcription empty, try again.")
-                raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")
-        else:
-            logger.debug(f"Transcription error: {response.status_code} - {response.text}")
-            raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")
-    else: 
-        try:
-            file_content = await file.read()
-            files = {"file": (file.filename, file_content, file.content_type)}
-            
-            external_url = f"{os.getenv('DWANI_API_BASE_URL_ASR')}/transcribe/?language={language}"
-            response = requests.post(
-                external_url,
-                files=files,
-                headers={"accept": "application/json"},
-                timeout=30
-            )
-            response.raise_for_status()
-            
-            transcription = response.json().get("text", "")
-            logger.debug(f"Transcription completed in {time.time() - start_time:.2f} seconds")
-            return TranscriptionResponse(text=transcription)
-        
-        except requests.Timeout:
-            logger.error("Transcription service timed out")
-            raise HTTPException(status_code=504, detail="Transcription service timeout")
-        except requests.RequestException as e:
-            logger.error(f"Transcription request failed: {str(e)}")
-            raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")
-        
 
 from fastapi import HTTPException
 import json

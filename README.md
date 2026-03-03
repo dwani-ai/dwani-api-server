@@ -4,9 +4,8 @@ dwani.ai - API Management Server
 
 docker build -t dwani/api-server:latest -f Dockerfile .
 
-Integrated Server 
 
-docker compose -f compose-integrated.yml up -d
+docker compose -f compose.yml up -d
 
 ```
 

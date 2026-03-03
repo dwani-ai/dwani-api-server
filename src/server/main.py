@@ -138,6 +138,7 @@ SUPPORTED_LANGUAGES = [
         "deu_Latn", "fra_Latn", "nld_Latn", "spa_Latn", "ita_Latn", "por_Latn",
         "rus_Cyrl", "pol_Latn"
     ]
+from pydantic import BaseModel, Field, ConfigDict
 
 class TranscriptionResponse(BaseModel):
     text: str = Field(..., description="Transcribed text from the audio")

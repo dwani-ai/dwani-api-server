@@ -127,7 +127,7 @@ async def home():
 
 
 # Supported models
-SUPPORTED_MODELS = ["gemma3", "moondream", "qwen2.5vl", "qwen3", "sarvam-m", "deepseek-r1"]
+SUPPORTED_MODELS = ["gemma4", "moondream", "qwen2.5vl", "qwen3", "sarvam-m", "deepseek-r1"]
 
 SUPPORTED_LANGUAGES = [
         "eng_Latn", "hin_Deva", "kan_Knda", "tam_Taml", "mal_Mlym", "tel_Telu",
@@ -301,7 +301,7 @@ class VisualQueryRequest(BaseModel):
     query: str = Field(..., description="Text query", max_length=1000)
     src_lang: str = Field(..., description="Source language code")
     tgt_lang: str = Field(..., description="Target language code")
-    model: str = Field(default="gemma3", description="LLM model", enum=SUPPORTED_MODELS)
+    model: str = Field(default="gemma4", description="LLM model", enum=SUPPORTED_MODELS)
 
     model_config = ConfigDict(
         json_schema_extra={
@@ -316,7 +316,7 @@ class VisualQueryRequest(BaseModel):
 
 
 class OCRRequest(BaseModel):
-    model: str = Field(default="gemma3", description="LLM model", enum=SUPPORTED_MODELS)
+    model: str = Field(default="gemma4", description="LLM model", enum=SUPPORTED_MODELS)
 
     model_config = ConfigDict(
         json_schema_extra={
@@ -329,7 +329,7 @@ class OCRRequest(BaseModel):
 
 class VisualQueryDirectRequest(BaseModel):
     query: str = Field(..., description="Text query", max_length=1000)
-    model: str = Field(default="gemma3", description="LLM model", enum=SUPPORTED_MODELS)
+    model: str = Field(default="gemma4", description="LLM model", enum=SUPPORTED_MODELS)
 
     model_config = ConfigDict(
         json_schema_extra={
@@ -489,7 +489,7 @@ class ChatRequest(BaseModel):
     prompt: str = Field(..., description="Prompt for chat (max 10000 characters)", max_length=10000)
     src_lang: str = Field(..., description="Source language code")
     tgt_lang: str = Field(..., description="Target language code")
-    model: str = Field(default="gemma3", description="LLM model")
+    model: str = Field(default="gemma4", description="LLM model")
 
     model_config = ConfigDict(
         json_schema_extra={
@@ -497,7 +497,7 @@ class ChatRequest(BaseModel):
                 "prompt": "Hello, how are you?",
                 "src_lang": "kan_Knda",
                 "tgt_lang": "kan_Knda",
-                "model": "gemma3"
+                "model": "gemma4"
             }
         }
     )
@@ -505,14 +505,14 @@ class ChatRequest(BaseModel):
 
 class ChatDirectRequest(BaseModel):
     prompt: str = Field(..., description="Prompt for chat (max 10000 characters)", max_length=10000)
-    model: str = Field(default="gemma3", description="LLM model")
+    model: str = Field(default="gemma4", description="LLM model")
     system_prompt: str = Field(default="", description="System prompt")
 
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
                 "prompt": "Hello, how are you?",
-                "model": "gemma3",
+                "model": "gemma4",
                 "system_prompt": ""
             }
         }
@@ -563,7 +563,7 @@ class VisualQueryRequest(BaseModel):
     query: str = Field(..., description="Text query")
     src_lang: str = Field(..., description="Source language code")
     tgt_lang: str = Field(..., description="Target language code")
-    model: str = Field(default="gemma3", description="LLM model")
+    model: str = Field(default="gemma4", description="LLM model")
 
     model_config = ConfigDict(
         json_schema_extra={
@@ -571,7 +571,7 @@ class VisualQueryRequest(BaseModel):
                 "query": "Describe the image",
                 "src_lang": "kan_Knda",
                 "tgt_lang": "kan_Knda",
-                "model": "gemma3"
+                "model": "gemma4"
             }
         }
     )
@@ -729,7 +729,7 @@ async def chat_v2(
     # Validate model parameter
     logger.debug(f"Received prompt: {chat_request.prompt}, src_lang: {chat_request.src_lang}, tgt_lang: {chat_request.tgt_lang}, model: {chat_request.model}")
 
-    valid_models = ["gemma3", "qwen3", "sarvam-m", "gpt-oss"]
+    valid_models = ["gemma4", "qwen3", "sarvam-m", "gpt-oss"]
     if chat_request.model not in valid_models:
         raise HTTPException(status_code=400, detail=f"Invalid model. Choose from {valid_models}")
 
@@ -807,7 +807,7 @@ async def chat_direct(
         raise HTTPException(status_code=400, detail="Prompt cannot exceed 10000 characters")
 
     # Validate model parameter
-    valid_models = ["gemma3", "qwen3", "sarvam-m", "gpt-oss"]
+    valid_models = ["gemma4", "qwen3", "sarvam-m", "gpt-oss"]
     if chat_request.model not in valid_models:
         raise HTTPException(status_code=400, detail=f"Invalid model. Choose from {valid_models}")
 
@@ -910,7 +910,7 @@ async def translate(
 
     logger.debug(f"Received translation request: {len(request.sentences)} sentences, src_lang: {request.src_lang} ({src_name}), tgt_lang: {request.tgt_lang} ({tgt_name})")
 
-    model = "gemma3"
+    model = "gemma4"
     client = get_openai_client(model)
 
     system_prompt = f"You are a professional translator. Translate the following list of sentences from {src_name} to {tgt_name}. Respond ONLY with a valid JSON array of the translated sentences in the same order, without any additional text or explanations."
@@ -1042,7 +1042,7 @@ async def visual_query(
     file: UploadFile = File(..., description="Image file to analyze (PNG only)"),
     src_lang: str = Query(..., description="Source language code (e.g., eng_Latn, kan_Knda)"),
     tgt_lang: str = Query(..., description="Target language code (e.g., eng_Latn, kan_Knda)"),
-    model: str = Query(default="gemma3", description="LLM model", enum=SUPPORTED_MODELS)
+    model: str = Query(default="gemma4", description="LLM model", enum=SUPPORTED_MODELS)
 ):
     # Validate query
     if not query.strip():
@@ -1113,7 +1113,7 @@ async def visual_query_direct(
     request: Request,
     query: str = Form(..., description="Text query to describe or analyze the image (e.g., 'describe the image')"),
     file: UploadFile = File(..., description="Image file to analyze (PNG only)"),
-    model: str = Query(default="gemma3", description="LLM model", enum=SUPPORTED_MODELS)
+    model: str = Query(default="gemma4", description="LLM model", enum=SUPPORTED_MODELS)
 ):
     # Validate query
     if not query.strip():
@@ -1252,7 +1252,7 @@ async def extract_text(
     request: Request,
     file: UploadFile = File(..., description="PDF file to extract text from"),
     page_number: int = Query(1, description="Page number to extract text from (1-based indexing)", ge=1),
-    model: str = Query(default="gemma3", description="LLM model", enum=SUPPORTED_MODELS)
+    model: str = Query(default="gemma4", description="LLM model", enum=SUPPORTED_MODELS)
 ):
     if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files supported")
@@ -1319,7 +1319,7 @@ async def extract_text(
 async def extract_text_all(
     request: Request,
     file: UploadFile = File(..., description="PDF file to extract text from"),
-    model: str = Query(default="gemma3", description="LLM model", enum=SUPPORTED_MODELS)
+    model: str = Query(default="gemma4", description="LLM model", enum=SUPPORTED_MODELS)
 ):
     if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files supported")
@@ -1394,7 +1394,7 @@ async def extract_text_all(
 async def extract_text_all_chunk(
     request: Request,
     file: UploadFile = File(..., description="PDF file to extract text from"),
-    model: str = Query(default="gemma3", description="LLM model", enum=SUPPORTED_MODELS)
+    model: str = Query(default="gemma4", description="LLM model", enum=SUPPORTED_MODELS)
 ):
     if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files supported")
@@ -1473,7 +1473,7 @@ async def extract_and_translate(
     page_number: int = Form(1, description="Page number to extract text from (1-based indexing)", ge=1),
     src_lang: str = Form("eng_Latn", description="Source language code (e.g., eng_Latn)"),
     tgt_lang: str = Form("kan_Knda", description="Target language code (e.g., kan_Knda)"),
-    model: str = Form(default="gemma3", description="LLM model", enum=SUPPORTED_MODELS)
+    model: str = Form(default="gemma4", description="LLM model", enum=SUPPORTED_MODELS)
 ):
     if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files supported")
@@ -1559,7 +1559,7 @@ async def summarize_pdf(
     request: Request,
     file: UploadFile = File(..., description="PDF file to summarize"),
     page_number: int = Form(..., description="Page number to summarize (1-based indexing)", ge=1),
-    model: str = Form(default="gemma3", description="LLM model", enum=SUPPORTED_MODELS)
+    model: str = Form(default="gemma4", description="LLM model", enum=SUPPORTED_MODELS)
 ):
     if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="File must be a PDF")
@@ -1640,7 +1640,7 @@ async def indic_summarize_pdf(
     file: UploadFile = File(..., description="PDF file to summarize"),
     page_number: int = Form(..., description="Page number to summarize (1-based indexing)", ge=1),
     tgt_lang: str = Form("kan_Knda", description="Target language code (e.g., kan_Knda)"),  # Default added
-    model: str = Form(default="gemma3", description="LLM model", enum=SUPPORTED_MODELS)
+    model: str = Form(default="gemma4", description="LLM model", enum=SUPPORTED_MODELS)
 ):
     logger.debug(f"Processing indic summarize PDF: page_number={page_number}, model={model}, tgt_lang={tgt_lang} and file={file.filename}")
 
@@ -1806,7 +1806,7 @@ def sanitize_json_string(s: str) -> str:
 
 async def extract_text_batch_from_pdf(
     file: UploadFile = File(...),
-    model: str = Body("gemma3", embed=True)
+    model: str = Body("gemma4", embed=True)
 ) -> JSONResponse:
     """Extract text from all PDF pages in a single batch request."""
     temp_file_path = None
@@ -1880,7 +1880,7 @@ async def extract_text_batch_from_pdf(
             os.remove(temp_file_path)
 
 
-async def extract_text_from_pdf(file: UploadFile = File(...), model: str = Body("gemma3", embed=True)) -> JSONResponse:
+async def extract_text_from_pdf(file: UploadFile = File(...), model: str = Body("gemma4", embed=True)) -> JSONResponse:
     """Extract text from all PDF pages one at a time."""
     try:
         if not file.filename.lower().endswith(".pdf"):
@@ -1945,7 +1945,7 @@ def encode_image(image: BytesIO) -> str:
 
 def get_async_openai_client(model: str) -> AsyncOpenAI:
     """Initialize AsyncOpenAI client with model-specific base URL."""
-    valid_models = ["gemma3"]
+    valid_models = ["gemma4"]
     if model not in valid_models:
         raise ValueError(f"Invalid model: {model}. Choose from: {', '.join(valid_models)}")
     
@@ -1965,7 +1965,7 @@ from pydantic import BaseModel
 
 
 async def extract_text_file(pdf_file):
-    model="gemma3"
+    model="gemma4"
     client = get_async_openai_client(model)
     images = await render_pdf_to_png(pdf_file)
     result = ""
@@ -2000,7 +2000,7 @@ async def extract_text_file(pdf_file):
     return result
 
 async def extract_text_page(pdf_file, page_number):
-    model="gemma3"
+    model="gemma4"
     client = get_async_openai_client(model)
     images = await render_pdf_to_png(pdf_file)
     
@@ -2066,7 +2066,7 @@ async def app_extract_text_from_pdf(pdf_file: UploadFile) -> str:
     Core extraction logic based on your original async function.
     Processes PDF pages as images and extracts text using a vision model.
     """
-    model = "gemma3"  # or whatever vision model you're using (e.g., gpt-4o, gemma3, etc.)
+    model = "gemma4"  # or whatever vision model you're using (e.g., gpt-4o, gemma4, etc.)
     client = get_async_openai_client(model)
     
     # Convert PDF pages to images
@@ -2186,7 +2186,7 @@ async def indic_summarize_pdf_all(
     request: Request,
     file: UploadFile = File(..., description="PDF file to summarize"),
     tgt_lang: str = Form("kan_Knda", description="Target language code (e.g., kan_Knda)"),
-    model: str = Form(default="gemma3", description="LLM model", enum=["gemma3"])  # Adjust SUPPORTED_MODELS as needed
+    model: str = Form(default="gemma4", description="LLM model", enum=["gemma4"])  # Adjust SUPPORTED_MODELS as needed
 ):
     logger.debug(f"Processing indic summarize PDF: model={model}, tgt_lang={tgt_lang}, file={file.filename}")
 
@@ -2269,7 +2269,7 @@ async def custom_prompt_pdf(
     file: UploadFile = File(..., description="PDF file to process"),
     page_number: int = Form(..., description="Page number to process (1-based indexing)", ge=1),
     prompt: str = Form(..., description="Custom prompt to process the page content"),
-    model: str = Form(default="gemma3", description="LLM model", enum=SUPPORTED_MODELS)
+    model: str = Form(default="gemma4", description="LLM model", enum=SUPPORTED_MODELS)
 ):
     if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="File must be a PDF")
@@ -2354,7 +2354,7 @@ async def indic_custom_prompt_pdf(
     prompt: str = Form(..., description="Custom prompt to process the page content"),
     query_lang: str = Form("eng_Latn", description="Query language code (e.g., eng_Latn)"),  # Default added
     tgt_lang: str = Form("kan_Knda", description="Target language code (e.g., kan_Knda)"),  # Default added
-    model: str = Form(default="gemma3", description="LLM model", enum=SUPPORTED_MODELS)
+    model: str = Form(default="gemma4", description="LLM model", enum=SUPPORTED_MODELS)
 ):
     if not file.filename.lower().endswith('.pdf'):
         raise HTTPException(status_code=400, detail="File must be a PDF")
@@ -2473,7 +2473,7 @@ async def indic_custom_prompt_pdf_all(
     prompt: str = Form(..., description="Custom prompt to process the page content"),
     query_lang: str = Form("eng_Latn", description="Source language code (e.g., eng_Latn)"),  # Default added
     tgt_lang: str = Form("kan_Knda", description="Target language code (e.g., kan_Knda)"),  # Default added
-    model: str = Form(default="gemma3", description="LLM model", enum=SUPPORTED_MODELS)
+    model: str = Form(default="gemma4", description="LLM model", enum=SUPPORTED_MODELS)
 ):
     if not file.filename.lower().endswith('.pdf'):
         raise HTTPException(status_code=400, detail="File must be a PDF")
@@ -2677,7 +2677,7 @@ import base64
 # Dynamic LLM client based on model
 def get_openai_client(model: str) -> OpenAI:
     """Initialize OpenAI client with model-specific base URL."""
-    valid_models = ["gemma3"]
+    valid_models = ["gemma4"]
     if model not in valid_models:
         raise ValueError(f"Invalid model: {model}. Choose from: {', '.join(valid_models)}")
     
@@ -2766,7 +2766,7 @@ def vision_query(img_base64: str, user_query:str,  model: str, system_prompt:str
 async def ocr_query(
     request: Request,
     file: UploadFile = File(..., description="Image file to analyze (PNG only)"),
-    model: str = Query(default="gemma3", description="LLM model", enum=SUPPORTED_MODELS)
+    model: str = Query(default="gemma4", description="LLM model", enum=SUPPORTED_MODELS)
 ):
     # Validate model
     validate_model(model)
@@ -2810,7 +2810,7 @@ async def ocr_image(file: UploadFile = File(...)):
         image_bytes = await file.read()
         image = BytesIO(image_bytes)
         img_base64 = encode_image(image)
-        text = ocr_page_with_rolm_query(img_base64, ocr_query_string ,  model="gemma3")
+        text = ocr_page_with_rolm_query(img_base64, ocr_query_string ,  model="gemma4")
         return {"extracted_text": text}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error processing image: {str(e)}")
@@ -2821,7 +2821,7 @@ from fastapi.responses import JSONResponse, FileResponse
 async def indic_visual_query_direct(
     file: UploadFile = File(..., description="PNG image file to analyze"),
     prompt: Optional[str] = Form(None, description="Optional custom prompt to process the extracted text"),
-    model: str = Form("gemma3", description="LLM model", enum=["gemma3", "moondream", "smolvla"])
+    model: str = Form("gemma4", description="LLM model", enum=["gemma4", "moondream", "smolvla"])
 ):
     try:
         if not file.content_type.startswith("image/png"):

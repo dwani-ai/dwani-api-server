@@ -22,6 +22,7 @@ import requests
 from typing import List, Optional, Dict, Any
 
 import json
+import base64
 from time import time
 from typing import Optional
 from fastapi import FastAPI, UploadFile, File, HTTPException
@@ -148,10 +149,36 @@ class TranscriptionResponse(BaseModel):
     )
 
 import httpx
+
+_TRANSCRIBE_TASK_PROMPT = (
+    "Transcribe the audio verbatim in its native script. "
+    "Output only the transcribed text. "
+    "Do not translate, explain, answer questions, or add labels or commentary."
+)
+
+
+def _transcription_only_text(raw: str) -> str:
+    s = raw.strip()
+    low = s.lower()
+    key = "response:"
+    if key in low:
+        s = s[: low.index(key)].strip()
+    for line in s.splitlines():
+        stripped = line.strip()
+        if stripped.lower().startswith("transcription:"):
+            return stripped.split(":", 1)[1].strip()
+    out_lines = []
+    for line in s.splitlines():
+        if line.strip().lower().startswith("language:"):
+            continue
+        out_lines.append(line)
+    return "\n".join(out_lines).strip() or raw.strip()
+
+
 @app.post("/v1/transcribe/", 
           response_model=TranscriptionResponse,
           summary="Transcribe Audio File",
-          description="Transcribe an audio file into text in the specified language.",
+          description="Transcribe audio via the chat completions API (gemma4 multimodal). Returns transcribed text only.",
           tags=["Audio"],
           responses={
               200: {"description": "Transcription result", "model": TranscriptionResponse},
@@ -160,62 +187,80 @@ import httpx
           })
 async def transcribe_audio(
     file: UploadFile = File(..., description="Audio file to transcribe"),
-    language: str = Query(..., description="Language of the audio (kannada, hindi, tamil, english, german)")
+    language: str = Query(..., description="Legacy hint (optional compatibility); detection is model-based"),
 ):
-    # Validate language
-    allowed_languages = ["kannada", "hindi", "tamil", "english","german", "telugu" , "marathi" ]
+    allowed_languages = ["kannada", "hindi", "tamil", "english", "german", "telugu", "marathi"]
     if language not in allowed_languages:
         raise HTTPException(status_code=400, detail=f"Language must be one of {allowed_languages}")
-    
-    start_time = time.time()
-   
-    if( language in ["english", "german"]):
-        
-        file_content = await file.read()
-        files = {"file": (file.filename, file_content, file.content_type),
-#                'model': (None, 'Systran/faster-whisper-large-v3')
-                'model': (None, 'Systran/faster-whisper-small')
-        }
-        
-        response = httpx.post('http://localhost:8000/v1/audio/transcriptions', files=files, timeout=30.0)
 
-        if response.status_code == 200:
-            transcription = response.json().get("text", "")
-            if transcription:
-                logger.debug(f"Transcription completed in {time.time() - start_time:.2f} seconds")
-                return TranscriptionResponse(text=transcription)
-            else:
-                logger.debug("Transcription empty, try again.")
-                raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")
-        else:
-            logger.debug(f"Transcription error: {response.status_code} - {response.text}")
-            raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")
-    else: 
-        try:
-            file_content = await file.read()
-            files = {"file": (file.filename, file_content, file.content_type)}
-            
-            external_url = f"{os.getenv('DWANI_API_BASE_URL_ASR')}/transcribe/?language={language}"
-            
-            response = requests.post(
-                external_url,
-                files=files,
-                headers={"accept": "application/json"},
-                timeout=30
+    start_time = time()
+    file_content = await file.read()
+    if not file_content:
+        raise HTTPException(status_code=400, detail="Empty audio file")
+
+    mime = file.content_type or "audio/wav"
+    b64 = base64.standard_b64encode(file_content).decode("ascii")
+    audio_data_url = f"data:{mime};base64,{b64}"
+
+    chat_url = os.getenv("DWANI_CHAT_COMPLETIONS_URL", "http://localhost:8000/v1/chat/completions")
+    payload = {
+        "model": "gemma4",
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "audio_url", "audio_url": {"url": audio_data_url}},
+                    {"type": "text", "text": _TRANSCRIBE_TASK_PROMPT},
+                ],
+            }
+        ],
+        "temperature": 0.2,
+        "max_tokens": 512,
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            response = await client.post(
+                chat_url,
+                headers={"Content-Type": "application/json"},
+                json=payload,
             )
-            response.raise_for_status()
-            
-            transcription = response.json().get("text", "")
-            logger.debug(f"Transcription completed in {time.time() - start_time:.2f} seconds")
-            return TranscriptionResponse(text=transcription)
-        
-        except requests.Timeout:
-            logger.error("Transcription service timed out")
-            raise HTTPException(status_code=504, detail="Transcription service timeout")
-        except requests.RequestException as e:
-            logger.error(f"Transcription request failed: {str(e)}")
-            raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")
-        
+    except httpx.TimeoutException:
+        logger.error("Chat completions transcription timed out")
+        raise HTTPException(status_code=504, detail="Transcription service timeout")
+    except httpx.RequestError as e:
+        logger.error(f"Chat completions request failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Transcription failed: {e}")
+
+    if response.status_code != 200:
+        logger.debug(f"Transcription error: {response.status_code} - {response.text}")
+        raise HTTPException(
+            status_code=502,
+            detail=f"Chat completions error: {response.status_code} {response.text}",
+        )
+
+    try:
+        body = response.json()
+        choices = body.get("choices") or []
+        text = ""
+        if choices:
+            msg = choices[0].get("message") or {}
+            text = (msg.get("content") or "").strip()
+    except (json.JSONDecodeError, TypeError, KeyError) as e:
+        logger.error(f"Invalid chat completions response: {e}")
+        raise HTTPException(status_code=502, detail="Invalid response from transcription service")
+
+    if not text:
+        logger.debug("Transcription empty from chat completions")
+        raise HTTPException(status_code=500, detail="Transcription failed: empty response")
+
+    text = _transcription_only_text(text)
+    if not text:
+        raise HTTPException(status_code=500, detail="Transcription failed: empty response")
+
+    logger.debug(f"Transcription completed in {time() - start_time:.2f} seconds")
+    return TranscriptionResponse(text=text)
+
 
 #model = YOLO("yolov8l.pt")  # example for large model with better accuracy
 

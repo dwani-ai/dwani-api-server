@@ -186,11 +186,16 @@ def _forward_headers_to_vllm(request: Request, body: bytes) -> dict[str, str]:
 # ---------------------------------------------------------------------------
 # FastAPI application
 # ---------------------------------------------------------------------------
+_disable_api_docs = os.getenv("DISABLE_API_DOCS", "").lower() in ("1", "true", "yes")
+
 app = FastAPI(
     title="dwani.ai API",
     description="A multimodal inference API designed for privacy.",
     version="1.0.0",
     redirect_slashes=False,
+    docs_url=None if _disable_api_docs else "/docs",
+    redoc_url=None if _disable_api_docs else "/redoc",
+    openapi_url=None if _disable_api_docs else "/openapi.json",
     openapi_tags=[
         {"name": "Chat", "description": "Chat-related endpoints"},
         {"name": "Audio", "description": "Audio processing and TTS endpoints"},

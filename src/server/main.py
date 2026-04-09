@@ -925,7 +925,7 @@ SUPPORTED_LANGUAGES = {code for _, code in language_options}
 @app.post("/v1/translate", 
           response_model=TranslationResponse,
           summary="Translate Text",
-          description="Translate a list of sentences from a source to a target language.",
+          description="Translate a list of sentences via the configured LLM (same backend as chat; DWANI_API_BASE_URL_LLM).",
           tags=["Translation"],
           responses={
               200: {"description": "Translation result", "model": TranslationResponse},
@@ -2903,10 +2903,6 @@ if __name__ == "__main__":
     external_api_base_url_tts = os.getenv("DWANI_API_BASE_URL_TTS")
     if not external_api_base_url_tts:
         raise ValueError("Environment variable DWANI_API_BASE_URL_TTS must be set")
-    
-    external_api_base_url_translate = os.getenv("DWANI_API_BASE_URL_TRANSLATE")
-    if not external_api_base_url_translate:
-        raise ValueError("Environment variable DWANI_API_BASE_URL_TRANSLATE must be set")
     
     external_api_base_url_speech_to_speech = os.getenv("DWANI_API_BASE_URL_S2S")
     if not external_api_base_url_speech_to_speech:

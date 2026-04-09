@@ -59,7 +59,6 @@ class Settings(BaseSettings):
     external_api_base_url_pdf: str = Field("http://localhost:7867", env="DWANI_API_BASE_URL_PDF")  # New field
     external_api_base_url_llm: str = Field("http://localhost:7860", env="DWANI_API_BASE_URL_LLM")  # New field
     external_api_base_url_asr: str = Field("http://localhost:7863", env="DWANI_API_BASE_URL_ASR")  # New field
-    external_api_base_url_translate: str = Field("http://localhost:7862", env="DWANI_API_BASE_URL_TRANSLATE")  # New field
     external_api_base_url_tts: str = Field("http://localhost:7864", env="DWANI_API_BASE_URL_TTS")  # New field
     
     default_admin_username: str = Field("admin", env="DEFAULT_ADMIN_USERNAME")

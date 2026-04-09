@@ -29,7 +29,7 @@ from typing import List, Optional, Dict, Any
 
 import json
 import base64
-from time import time
+import time
 from typing import Optional
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.responses import Response, JSONResponse
@@ -196,7 +196,7 @@ async def transcribe_audio(
         description="Optional legacy query param; ignored. Transcription is model-based.",
     ),
 ):
-    start_time = time()
+    start_time = time.time()
     file_content = await file.read()
     if not file_content:
         raise HTTPException(status_code=400, detail="Empty audio file")
@@ -255,7 +255,7 @@ async def transcribe_audio(
     if not text:
         raise HTTPException(status_code=500, detail="Transcription failed: empty response")
 
-    logger.debug(f"Transcription completed in {time() - start_time:.2f} seconds")
+    logger.debug(f"Transcription completed in {time.time() - start_time:.2f} seconds")
     return TranscriptionResponse(text=text)
 
 
@@ -625,8 +625,6 @@ class VisualQueryResponse(BaseModel):
     model_config = ConfigDict(
         json_schema_extra={"example": {"answer": "The image shows a screenshot of a webpage."}}
     )
-
-import time
 
 @app.post("/v1/audio/speech",
           summary="Generate Speech from Text",

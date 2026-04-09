@@ -7,14 +7,12 @@ services:
     depends_on:
       - tts-indic-server
       - vllm-server
-      - asr-indic-server
     environment:
       - HF_TOKEN=hf_this_is_a_valid_token_for_not_google
       - API_KEY_SECRET=dwani-very-secret-key-please-dont-tell-anyone
       - CHAT_RATE_LIMIT=100/minute
       - DWANI_API_BASE_URL_LLM=http://vllm-server:10802/v1
       - DWANI_API_BASE_URL_TTS=http://tts-indic-server:10804
-      - DWANI_API_BASE_URL_ASR=http://asr-indic-server:10803
       - DWANI_API_BASE_URL_TRANSLATE=http://host.docker.internal:7862
       - DWANI_API_BASE_URL_S2S=http://host.docker.internal:7861
       - SPEECH_RATE_LIMIT=5/minute
@@ -22,22 +20,6 @@ services:
       - DEFAULT_ADMIN_USER=this_is_default_amdin
       - DEFAULT_ADMIN_PASSWORD=not_default_admin
     restart: unless-stopped
-  asr-indic-server:
-    image: dwani/asr-indic-server:latest
-    volumes:
-      - ~/.cache/huggingface:/root/.cache/huggingface
-    ports:
-      - "10803:10803"
-    environment:
-      - HF_TOKEN
-    restart: unless-stopped
-    deploy:
-          resources:
-            reservations:
-              devices:
-                - driver: nvidia
-                  device_ids: ['0']
-                  capabilities: [gpu]
   tts-indic-server:
     image: dwani/tts-indic-server:latest
     volumes:

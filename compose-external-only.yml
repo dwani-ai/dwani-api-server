@@ -10,7 +10,6 @@ services:
       - CHAT_RATE_LIMIT=100/minute
       - DWANI_API_BASE_URL_LLM=http://vllm-server:10802/v1
       - DWANI_API_BASE_URL_TTS=http://tts-indic-server:10804
-      - DWANI_API_BASE_URL_ASR=http://asr-indic-server:10803
       - DWANI_API_BASE_URL_TRANSLATE=http://host.docker.internal:7862
       - DWANI_API_BASE_URL_S2S=http://host.docker.internal:7861
       - SPEECH_RATE_LIMIT=5/minute

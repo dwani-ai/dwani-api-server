@@ -186,17 +186,16 @@ def _transcription_only_text(raw: str) -> str:
           tags=["Audio"],
           responses={
               200: {"description": "Transcription result", "model": TranscriptionResponse},
-              400: {"description": "Invalid audio or language"},
+              400: {"description": "Invalid audio"},
               504: {"description": "Transcription service timeout"}
           })
 async def transcribe_audio(
     file: UploadFile = File(..., description="Audio file to transcribe"),
-    language: str = Query(..., description="Legacy hint (optional compatibility); detection is model-based"),
+    language: Optional[str] = Query(
+        None,
+        description="Optional legacy query param; ignored. Transcription is model-based.",
+    ),
 ):
-    allowed_languages = ["kannada", "hindi", "tamil", "english", "german", "telugu", "marathi"]
-    if language not in allowed_languages:
-        raise HTTPException(status_code=400, detail=f"Language must be one of {allowed_languages}")
-
     start_time = time()
     file_content = await file.read()
     if not file_content:
@@ -2906,10 +2905,6 @@ if __name__ == "__main__":
     external_api_base_url_tts = os.getenv("DWANI_API_BASE_URL_TTS")
     if not external_api_base_url_tts:
         raise ValueError("Environment variable DWANI_API_BASE_URL_TTS must be set")
-    
-    external_api_base_url_asr = os.getenv("DWANI_API_BASE_URL_ASR")
-    if not external_api_base_url_asr:
-        raise ValueError("Environment variable DWANI_API_BASE_URL_ASR must be set")
     
     external_api_base_url_translate = os.getenv("DWANI_API_BASE_URL_TRANSLATE")
     if not external_api_base_url_translate:

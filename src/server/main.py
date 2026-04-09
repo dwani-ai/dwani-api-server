@@ -10,7 +10,13 @@ from fastapi.background import BackgroundTasks
 import tempfile
 import os
 from pathlib import Path
-from openai import OpenAI
+from openai import (
+    APIConnectionError,
+    APIStatusError,
+    APITimeoutError,
+    OpenAI,
+    OpenAIError,
+)
 
     
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile, Form, Query
@@ -148,8 +154,6 @@ class TranscriptionResponse(BaseModel):
         json_schema_extra={"example": {"text": "Hello, how are you?"}}
     )
 
-import httpx
-
 _TRANSCRIBE_TASK_PROMPT = (
     "Transcribe the audio verbatim in its native script. "
     "Output only the transcribed text. "
@@ -202,53 +206,47 @@ async def transcribe_audio(
     b64 = base64.standard_b64encode(file_content).decode("ascii")
     audio_data_url = f"data:{mime};base64,{b64}"
 
-    chat_url = os.getenv("DWANI_CHAT_COMPLETIONS_URL", "http://localhost:8000/v1/chat/completions")
-    payload = {
-        "model": "gemma4",
-        "messages": [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "audio_url", "audio_url": {"url": audio_data_url}},
-                    {"type": "text", "text": _TRANSCRIBE_TASK_PROMPT},
-                ],
-            }
-        ],
-        "temperature": 0.2,
-        "max_tokens": 512,
-    }
-
+    model = "gemma4"
     try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            response = await client.post(
-                chat_url,
-                headers={"Content-Type": "application/json"},
-                json=payload,
-            )
-    except httpx.TimeoutException:
+        client = get_async_openai_client(model)
+        response = await client.chat.completions.create(
+            model=model,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "audio_url", "audio_url": {"url": audio_data_url}},
+                        {"type": "text", "text": _TRANSCRIBE_TASK_PROMPT},
+                    ],
+                }
+            ],
+            temperature=0.2,
+            max_tokens=512,
+            timeout=60.0,
+        )
+    except APITimeoutError:
         logger.error("Chat completions transcription timed out")
         raise HTTPException(status_code=504, detail="Transcription service timeout")
-    except httpx.RequestError as e:
+    except APIConnectionError as e:
         logger.error(f"Chat completions request failed: {e}")
         raise HTTPException(status_code=500, detail=f"Transcription failed: {e}")
-
-    if response.status_code != 200:
-        logger.debug(f"Transcription error: {response.status_code} - {response.text}")
+    except APIStatusError as e:
+        err_body = getattr(e, "body", None)
+        err_detail = err_body if err_body is not None else getattr(e, "message", str(e))
+        logger.debug(f"Transcription error: {e.status_code} - {err_detail}")
         raise HTTPException(
             status_code=502,
-            detail=f"Chat completions error: {response.status_code} {response.text}",
+            detail=f"Chat completions error: {e.status_code} {err_detail}",
         )
+    except OpenAIError as e:
+        logger.error(f"Transcription failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Transcription failed: {e}")
 
-    try:
-        body = response.json()
-        choices = body.get("choices") or []
-        text = ""
-        if choices:
-            msg = choices[0].get("message") or {}
-            text = (msg.get("content") or "").strip()
-    except (json.JSONDecodeError, TypeError, KeyError) as e:
-        logger.error(f"Invalid chat completions response: {e}")
-        raise HTTPException(status_code=502, detail="Invalid response from transcription service")
+    text = ""
+    if response.choices:
+        msg = response.choices[0].message
+        if msg and msg.content is not None:
+            text = str(msg.content).strip()
 
     if not text:
         logger.debug("Transcription empty from chat completions")

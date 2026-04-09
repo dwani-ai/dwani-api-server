@@ -1,53 +1,63 @@
+"""dwani.ai FastAPI application (multimodal inference API)."""
+
+from __future__ import annotations
+
 import argparse
+import asyncio
+import base64
+import json
+import logging
+import logging.config
 import os
-from typing import List
-from abc import ABC, abstractmethod
-import uvicorn
-from fastapi import FastAPI, File, HTTPException, Query, Request, UploadFile, Form, Depends, Body
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
-from fastapi.background import BackgroundTasks
+import re
 import tempfile
-import os
+import time
+from datetime import datetime
+from enum import Enum
+from io import BytesIO
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+import numpy as np
+import pytz
+import requests
+import uvicorn
+from fastapi import (
+    BackgroundTasks,
+    Body,
+    Depends,
+    FastAPI,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    Request,
+    UploadFile,
+)
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import (
+    FileResponse,
+    JSONResponse,
+    RedirectResponse,
+    Response,
+    StreamingResponse,
+)
+from num2words import num2words
 from openai import (
     APIConnectionError,
     APIStatusError,
     APITimeoutError,
+    AsyncOpenAI,
     OpenAI,
     OpenAIError,
 )
+from pdf2image import convert_from_path
+from PIL import Image
+from pydantic import BaseModel, ConfigDict, Field
 
-    
-from fastapi import FastAPI, File, HTTPException, Request, UploadFile, Form, Query
-from pydantic import BaseModel, Field
-
-from fastapi.responses import RedirectResponse, StreamingResponse
-from pydantic import BaseModel, Field
-import requests
-from typing import List, Optional, Dict, Any
-
-import json
-import base64
-import time
-from typing import Optional
-from fastapi import FastAPI, UploadFile, File, HTTPException
-from fastapi.responses import Response, JSONResponse
-from fastapi.middleware.cors import CORSMiddleware
-#from ultralytics import YOLO
-#import cv2
-import numpy as np
-
-
-from num2words import num2words
-from datetime import datetime
-import pytz
-
-
-
-import logging
-import logging.config
-from logging.handlers import RotatingFileHandler
+# from ultralytics import YOLO
+# import cv2
 
 class Settings:
     chat_rate_limit = "10/minute"
@@ -87,11 +97,43 @@ logging_config = {
 logging.config.dictConfig(logging_config)
 logger = logging.getLogger("indic_all_server")
 
+# ---------------------------------------------------------------------------
+# OpenAI-compatible LLM clients (DWANI_API_BASE_URL_LLM)
+# ---------------------------------------------------------------------------
+_VALID_LLM_MODELS = frozenset({"gemma4"})
 
-# FastAPI app setup with enhanced docs
+
+def get_openai_client(model: str) -> OpenAI:
+    """Sync client for chat completions (same backend as async)."""
+    if model not in _VALID_LLM_MODELS:
+        raise ValueError(
+            f"Invalid model: {model}. Choose from: {', '.join(sorted(_VALID_LLM_MODELS))}"
+        )
+    base_url = f"{os.getenv('DWANI_API_BASE_URL_LLM')}"
+    return OpenAI(api_key="http", base_url=base_url)
+
+
+def get_async_openai_client(model: str) -> AsyncOpenAI:
+    """Async client for vision / PDF / transcribe flows."""
+    if model not in _VALID_LLM_MODELS:
+        raise ValueError(
+            f"Invalid model: {model}. Choose from: {', '.join(sorted(_VALID_LLM_MODELS))}"
+        )
+    base_url = f"{os.getenv('DWANI_API_BASE_URL_LLM')}"
+    return AsyncOpenAI(api_key="http", base_url=base_url)
+
+
+def encode_image(image: BytesIO) -> str:
+    """Encode image bytes from a BytesIO buffer to a base64 string."""
+    return base64.b64encode(image.read()).decode("utf-8")
+
+
+# ---------------------------------------------------------------------------
+# FastAPI application
+# ---------------------------------------------------------------------------
 app = FastAPI(
     title="dwani.ai API",
-    description="A multimodal Inference API desgined for Privacy",
+    description="A multimodal inference API designed for privacy.",
     version="1.0.0",
     redirect_slashes=False,
     openapi_tags=[
@@ -116,7 +158,9 @@ app.add_middleware(
 )
 
 
-# Endpoints with enhanced Swagger docs
+# ---------------------------------------------------------------------------
+# Routes: health & documentation
+# ---------------------------------------------------------------------------
 @app.get("/v1/health", 
          summary="Check API Health",
          description="Returns the health status of the API and the current model in use.",
@@ -133,19 +177,56 @@ async def home():
     return RedirectResponse(url="/docs")
 
 
-# Supported models
+# ---------------------------------------------------------------------------
+# Model and language constants
+# ---------------------------------------------------------------------------
 SUPPORTED_MODELS = ["gemma4", "moondream", "qwen2.5vl", "qwen3", "sarvam-m", "deepseek-r1"]
 
-SUPPORTED_LANGUAGES = [
-        "eng_Latn", "hin_Deva", "kan_Knda", "tam_Taml", "mal_Mlym", "tel_Telu",
-        "asm_Beng", "kas_Arab" , "pan_Guru","ben_Beng" , "kas_Deva" , "san_Deva",
-        "brx_Deva", "mai_Deva" , "sat_Olck" , "doi_Deva", "mal_Mlym", "snd_Arab",
-        "mar_Deva" , "snd_Deva", "gom_Deva", "mni_Beng", "guj_Gujr", "mni_Mtei",
-        "npi_Deva", "urd_Arab", "ory_Orya",
-        "deu_Latn", "fra_Latn", "nld_Latn", "spa_Latn", "ita_Latn", "por_Latn",
-        "rus_Cyrl", "pol_Latn"
-    ]
-from pydantic import BaseModel, Field, ConfigDict
+language_options = [
+    ("English", "eng_Latn"),
+    ("Kannada", "kan_Knda"),
+    ("Hindi", "hin_Deva"),
+    ("Assamese", "asm_Beng"),
+    ("Bengali", "ben_Beng"),
+    ("Gujarati", "guj_Gujr"),
+    ("Malayalam", "mal_Mlym"),
+    ("Marathi", "mar_Deva"),
+    ("Odia", "ory_Orya"),
+    ("Punjabi", "pan_Guru"),
+    ("Tamil", "tam_Taml"),
+    ("Telugu", "tel_Telu"),
+    ("German", "deu_Latn"),
+]
+
+code_to_name = {code: name for name, code in language_options}
+# Superset for validation (includes codes not listed in language_options / translate UI names).
+_SUPPORTED_LANG_EXTRA = frozenset(
+    {
+        "kas_Arab",
+        "kas_Deva",
+        "san_Deva",
+        "brx_Deva",
+        "mai_Deva",
+        "sat_Olck",
+        "doi_Deva",
+        "snd_Arab",
+        "snd_Deva",
+        "gom_Deva",
+        "mni_Beng",
+        "mni_Mtei",
+        "npi_Deva",
+        "urd_Arab",
+        "fra_Latn",
+        "nld_Latn",
+        "spa_Latn",
+        "ita_Latn",
+        "por_Latn",
+        "rus_Cyrl",
+        "pol_Latn",
+    }
+)
+SUPPORTED_LANGUAGES = {code for _, code in language_options} | _SUPPORTED_LANG_EXTRA
+
 
 class TranscriptionResponse(BaseModel):
     text: str = Field(..., description="Transcribed text from the audio")
@@ -179,6 +260,9 @@ def _transcription_only_text(raw: str) -> str:
     return "\n".join(out_lines).strip() or raw.strip()
 
 
+# ---------------------------------------------------------------------------
+# Routes: audio (transcription)
+# ---------------------------------------------------------------------------
 @app.post("/v1/transcribe/", 
           response_model=TranscriptionResponse,
           summary="Transcribe Audio File",
@@ -332,13 +416,9 @@ async def detect_image(
     return Response(content=img_encoded.tobytes(), media_type="image/jpeg")
 '''
 
-# Pydantic models (updated to include model validation)
-from typing import Dict, List, Optional
-from pydantic import BaseModel, Field, ConfigDict
-# Assuming SUPPORTED_MODELS is defined elsewhere
-# from your_module import SUPPORTED_MODELS
-
-
+# ---------------------------------------------------------------------------
+# Request / response schemas (Pydantic)
+# ---------------------------------------------------------------------------
 class VisualQueryRequest(BaseModel):
     query: str = Field(..., description="Text query", max_length=1000)
     src_lang: str = Field(..., description="Source language code")
@@ -497,20 +577,6 @@ def validate_language(lang: str, field_name: str) -> str:
     return lang
 
 
-from typing import List
-from pydantic import BaseModel, Field, ConfigDict
-# If you have SUPPORTED_MODELS elsewhere, import it
-# from your_module import SUPPORTED_MODELS
-
-
-class TranscriptionResponse(BaseModel):
-    text: str = Field(..., description="Transcribed text from the audio")
-
-    model_config = ConfigDict(
-        json_schema_extra={"example": {"text": "Hello, how are you?"}}
-    )
-
-
 class TextGenerationResponse(BaseModel):
     text: str = Field(..., description="Generated text response")
 
@@ -601,31 +667,9 @@ class TranslationResponse(BaseModel):
     )
 
 
-class VisualQueryRequest(BaseModel):
-    query: str = Field(..., description="Text query")
-    src_lang: str = Field(..., description="Source language code")
-    tgt_lang: str = Field(..., description="Target language code")
-    model: str = Field(default="gemma4", description="LLM model")
-
-    model_config = ConfigDict(
-        json_schema_extra={
-            "example": {
-                "query": "Describe the image",
-                "src_lang": "kan_Knda",
-                "tgt_lang": "kan_Knda",
-                "model": "gemma4"
-            }
-        }
-    )
-
-
-class VisualQueryResponse(BaseModel):
-    answer: str
-
-    model_config = ConfigDict(
-        json_schema_extra={"example": {"answer": "The image shows a screenshot of a webpage."}}
-    )
-
+# ---------------------------------------------------------------------------
+# Routes: audio (TTS / speech)
+# ---------------------------------------------------------------------------
 @app.post("/v1/audio/speech",
           summary="Generate Speech from Text",
           description="Convert text to speech using an external TTS service and return as a downloadable audio file.",
@@ -746,7 +790,11 @@ async def generate_audio(
         finally:
             # Close the temporary file to ensure it's fully written
             temp_file.close()
-    
+
+
+# ---------------------------------------------------------------------------
+# Routes: chat
+# ---------------------------------------------------------------------------
 @app.post("/v1/indic_chat",
           response_model=ChatResponse,
           summary="Chat with AI",
@@ -894,34 +942,9 @@ async def chat_direct(
         raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
 
 
-from fastapi import HTTPException
-import json
-import logging
-
-
-# Language options mapping
-language_options = [
-    ("English", "eng_Latn"),
-    ("Kannada", "kan_Knda"),
-    ("Hindi", "hin_Deva"), 
-    ("Assamese", "asm_Beng"),
-    ("Bengali", "ben_Beng"),
-    ("Gujarati", "guj_Gujr"),
-    ("Malayalam", "mal_Mlym"),
-    ("Marathi", "mar_Deva"),
-    ("Odia", "ory_Orya"),
-    ("Punjabi", "pan_Guru"),
-    ("Tamil", "tam_Taml"),
-    ("Telugu", "tel_Telu"),
-    ("German", "deu_Latn") 
-]
-
-# Mapping from code to language name
-code_to_name = {code: name for name, code in language_options}
-
-# Assuming SUPPORTED_LANGUAGES is defined as set of codes
-SUPPORTED_LANGUAGES = {code for _, code in language_options}
-
+# ---------------------------------------------------------------------------
+# Routes: translation
+# ---------------------------------------------------------------------------
 @app.post("/v1/translate", 
           response_model=TranslationResponse,
           summary="Translate Text",
@@ -1032,31 +1055,6 @@ async def translate(
         logger.error(f"Error during translation: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Translation failed: {str(e)}")
 
-from pydantic import BaseModel, ConfigDict
-
-class VisualQueryResponse(BaseModel):
-    answer: str
-
-    model_config = ConfigDict(
-        json_schema_extra={"example": {"answer": "The image shows a screenshot of a webpage."}}
-    )
-
-
-language_options = [
-    ("English", "eng_Latn"),
-    ("Kannada", "kan_Knda"),
-    ("Hindi", "hin_Deva"), 
-    ("Assamese", "asm_Beng"),
-    ("Bengali","ben_Beng"),
-    ("Gujarati","guj_Gujr"),
-    ("Malayalam","mal_Mlym"),
-    ("Marathi","mar_Deva"),
-    ("Odia","ory_Orya"),
-    ("Punjabi","pan_Guru"),
-    ("Tamil","tam_Taml"),
-    ("Telugu","tel_Telu"),
-    ("German","deu_Latn"),
-]
 
 def get_language_name(lang_code):
     for name, code in language_options:
@@ -1064,7 +1062,10 @@ def get_language_name(lang_code):
             return name
     return "English"
 
-# Visual Query Endpoint
+
+# ---------------------------------------------------------------------------
+# Routes: vision / visual query
+# ---------------------------------------------------------------------------
 @app.post("/v1/indic_visual_query",
           response_model=VisualQueryResponse,
           summary="Visual Query with Image",
@@ -1204,7 +1205,6 @@ async def visual_query_direct(
         logger.error(f"Invalid JSON response: {str(e)}")
         raise HTTPException(status_code=500, detail="Invalid response format from visual query direct service")
 
-from enum import Enum
 
 class SupportedLanguage(str, Enum):
     kannada = "kannada"
@@ -1270,13 +1270,11 @@ async def speech_to_speech(
     except requests.RequestException as e:
         logger.error(f"External speech-to-speech API error: {str(e)}")
         raise HTTPException(status_code=500, detail=f"External API error: {str(e)}")
-    
 
-'''
-Upgrading system to use Vllm server
-'''
 
-# Extract Text Endpoint
+# ---------------------------------------------------------------------------
+# Routes: PDF (extract, summarize, custom prompts)
+# ---------------------------------------------------------------------------
 @app.post("/v1/extract-text",
           response_model=PDFTextExtractionResponse,
           summary="Extract Text from PDF",
@@ -1756,13 +1754,6 @@ async def indic_summarize_pdf(
         logger.error(f"Invalid JSON response from external API: {str(e)}")
         raise HTTPException(status_code=500, detail="Invalid response format from external API")
 
-from pdf2image import convert_from_path
-from io import BytesIO
-
-
-def encode_image(image: BytesIO) -> str:
-    """Encode image bytes to base64 string."""
-    return base64.b64encode(image.read()).decode("utf-8")
 
 async def get_base64_msg_from_pdf(file):
     try:
@@ -1825,8 +1816,6 @@ async def render_pdf_to_png(pdf_file):
 
     return images
 
-
-import re
 
 def sanitize_json_string(s: str) -> str:
     """Sanitize a string to ensure it is valid for JSON parsing."""
@@ -1975,33 +1964,7 @@ async def extract_text_from_pdf(file: UploadFile = File(...), model: str = Body(
         logger.error(f"Error in extract_text_from_pdf: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
     finally:
-        await file.close()    
-
-from openai import AsyncOpenAI
-
-def encode_image(image: BytesIO) -> str:
-    """Encode image bytes to base64 string."""
-    return base64.b64encode(image.read()).decode("utf-8")
-
-def get_async_openai_client(model: str) -> AsyncOpenAI:
-    """Initialize AsyncOpenAI client with model-specific base URL."""
-    valid_models = ["gemma4"]
-    if model not in valid_models:
-        raise ValueError(f"Invalid model: {model}. Choose from: {', '.join(valid_models)}")
-    
-
-    base_url = f"{os.getenv('DWANI_API_BASE_URL_LLM')}"
-
-    return AsyncOpenAI(api_key="http", base_url=base_url)
-
-
-
-
-from io import BytesIO
-from typing import List, Literal, Optional
-import base64
-from pydantic import BaseModel
-
+        await file.close()
 
 
 async def extract_text_file(pdf_file):
@@ -2077,18 +2040,9 @@ async def extract_text_page(pdf_file, page_number):
     return raw_response
 
 
-
-from fastapi import FastAPI, File, UploadFile, HTTPException
-from fastapi.responses import JSONResponse
-from pydantic import BaseModel
-from typing import List
-import asyncio
-
-from io import BytesIO
-from PIL import Image
-import base64
-
-
+# ---------------------------------------------------------------------------
+# App PDF text extraction (upload helper)
+# ---------------------------------------------------------------------------
 class ExtractionResponse(BaseModel):
     extracted_text: str
     page_count: int
@@ -2185,30 +2139,6 @@ async def extract_text_endpoint(file: UploadFile = File(...)):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Text extraction failed: {str(e)}")
-
-
-
-import base64
-from io import BytesIO
-from pdf2image import convert_from_path
-import os
-import asyncio
-import re
-
-async def render_pdf_to_png(pdf_file):
-    """Convert PDF to images."""
-    try:
-        with open("temp.pdf", "wb") as f:
-            f.write(await pdf_file.read())
-        images = convert_from_path("temp.pdf")
-    except Exception as e:
-        logger.error(f"PDF conversion failed: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Failed to convert PDF to images: {str(e)}")
-    finally:
-        if os.path.exists("temp.pdf"):
-            os.remove("temp.pdf")
-
-    return images
 
 
 @app.post("/v1/indic-summarize-pdf-all",
@@ -2707,30 +2637,6 @@ async def indic_custom_prompt_kannada_pdf(
         temp_file.close()
 
 
-
-from pydantic import BaseModel, ValidationError
-
-from io import BytesIO
-from openai import OpenAI
-import base64
-
-# Dynamic LLM client based on model
-def get_openai_client(model: str) -> OpenAI:
-    """Initialize OpenAI client with model-specific base URL."""
-    valid_models = ["gemma4"]
-    if model not in valid_models:
-        raise ValueError(f"Invalid model: {model}. Choose from: {', '.join(valid_models)}")
-    
-    base_url = f"{os.getenv('DWANI_API_BASE_URL_LLM')}"
-    
-    return OpenAI(api_key="http", base_url=base_url)
-
-
-def encode_image(image: BytesIO) -> str:
-    """Encode image bytes to base64 string."""
-    return base64.b64encode(image.read()).decode("utf-8")
-
-
 ocr_query_string = "Return the plain text extracted from this image."
 
 def ocr_page_with_rolm_query(img_base64: str, query:str,  model: str) -> str:
@@ -2855,8 +2761,6 @@ async def ocr_image(file: UploadFile = File(...)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error processing image: {str(e)}")
 
-
-from fastapi.responses import JSONResponse, FileResponse
 
 async def indic_visual_query_direct(
     file: UploadFile = File(..., description="PNG image file to analyze"),

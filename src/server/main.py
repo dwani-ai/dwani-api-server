@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import base64
+import ipaddress
 import json
 import logging
 import logging.config
@@ -18,6 +19,7 @@ from io import BytesIO
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlparse
 
 import httpx
 import numpy as np
@@ -104,13 +106,42 @@ logger = logging.getLogger("indic_all_server")
 _VALID_LLM_MODELS = frozenset({"gemma4"})
 
 
+def _normalize_llm_base_url(raw: str) -> str:
+    """
+    If DWANI_API_BASE_URL_LLM uses http:// against a public DNS name, many CDNs
+    return 301 to https://. Following that redirect often turns POST into GET,
+    which yields 405 on /v1/chat/completions. Upgrade to https:// for those
+    hosts only; keep http:// for localhost, IPs, and single-label docker names.
+    """
+    url = (raw or "").strip()
+    if not url.startswith("http://"):
+        return url
+    try:
+        parsed = urlparse(url)
+    except Exception:
+        return url
+    host = parsed.hostname
+    if not host:
+        return url
+    if host == "localhost" or host.startswith("127."):
+        return url
+    try:
+        ipaddress.ip_address(host)
+        return url
+    except ValueError:
+        pass
+    if "." not in host:
+        return url
+    return "https://" + url[7:]
+
+
 def get_openai_client(model: str) -> OpenAI:
     """Sync client for chat completions (same backend as async)."""
     if model not in _VALID_LLM_MODELS:
         raise ValueError(
             f"Invalid model: {model}. Choose from: {', '.join(sorted(_VALID_LLM_MODELS))}"
         )
-    base_url = f"{os.getenv('DWANI_API_BASE_URL_LLM')}"
+    base_url = _normalize_llm_base_url(os.getenv("DWANI_API_BASE_URL_LLM", ""))
     return OpenAI(api_key="http", base_url=base_url)
 
 
@@ -120,7 +151,7 @@ def get_async_openai_client(model: str) -> AsyncOpenAI:
         raise ValueError(
             f"Invalid model: {model}. Choose from: {', '.join(sorted(_VALID_LLM_MODELS))}"
         )
-    base_url = f"{os.getenv('DWANI_API_BASE_URL_LLM')}"
+    base_url = _normalize_llm_base_url(os.getenv("DWANI_API_BASE_URL_LLM", ""))
     return AsyncOpenAI(api_key="http", base_url=base_url)
 
 
@@ -130,7 +161,7 @@ def encode_image(image: BytesIO) -> str:
 
 
 def _vllm_chat_completions_url() -> str:
-    base = (os.getenv("DWANI_API_BASE_URL_LLM") or "").strip()
+    base = _normalize_llm_base_url(os.getenv("DWANI_API_BASE_URL_LLM", "").strip())
     if not base:
         raise HTTPException(
             status_code=503,

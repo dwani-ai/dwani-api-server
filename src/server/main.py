@@ -1,46 +1,66 @@
+"""dwani.ai FastAPI application (multimodal inference API)."""
+
+from __future__ import annotations
+
 import argparse
-import os
-from typing import List
-from abc import ABC, abstractmethod
-import uvicorn
-from fastapi import FastAPI, File, HTTPException, Query, Request, UploadFile, Form, Depends, Body
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
-from fastapi.background import BackgroundTasks
-import tempfile
-import os
-from pathlib import Path
-from openai import OpenAI
-
-    
-from fastapi import FastAPI, File, HTTPException, Request, UploadFile, Form, Query
-from pydantic import BaseModel, Field
-
-from fastapi.responses import RedirectResponse, StreamingResponse
-from pydantic import BaseModel, Field
-import requests
-from typing import List, Optional, Dict, Any
-
+import asyncio
+import base64
+import ipaddress
 import json
-from time import time
-from typing import Optional
-from fastapi import FastAPI, UploadFile, File, HTTPException
-from fastapi.responses import Response, JSONResponse
-from fastapi.middleware.cors import CORSMiddleware
-#from ultralytics import YOLO
-#import cv2
-import numpy as np
-
-
-from num2words import num2words
-from datetime import datetime
-import pytz
-
-
-
 import logging
 import logging.config
+import os
+import re
+import tempfile
+import time
+from datetime import datetime
+from enum import Enum
+from io import BytesIO
 from logging.handlers import RotatingFileHandler
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+from urllib.parse import urlparse
+
+import httpx
+import numpy as np
+import pytz
+import requests
+import uvicorn
+from fastapi import (
+    BackgroundTasks,
+    Body,
+    Depends,
+    FastAPI,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    Request,
+    UploadFile,
+)
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import (
+    FileResponse,
+    JSONResponse,
+    RedirectResponse,
+    Response,
+    StreamingResponse,
+)
+from num2words import num2words
+from openai import (
+    APIConnectionError,
+    APIStatusError,
+    APITimeoutError,
+    AsyncOpenAI,
+    OpenAI,
+    OpenAIError,
+)
+from pdf2image import convert_from_path
+from PIL import Image
+from pydantic import BaseModel, ConfigDict, Field
+
+# from ultralytics import YOLO
+# import cv2
 
 class Settings:
     chat_rate_limit = "10/minute"
@@ -80,13 +100,102 @@ logging_config = {
 logging.config.dictConfig(logging_config)
 logger = logging.getLogger("indic_all_server")
 
+# ---------------------------------------------------------------------------
+# OpenAI-compatible LLM clients (DWANI_API_BASE_URL_LLM)
+# ---------------------------------------------------------------------------
+_VALID_LLM_MODELS = frozenset({"gemma4"})
 
-# FastAPI app setup with enhanced docs
+
+def _normalize_llm_base_url(raw: str) -> str:
+    """
+    If DWANI_API_BASE_URL_LLM uses http:// against a public DNS name, many CDNs
+    return 301 to https://. Following that redirect often turns POST into GET,
+    which yields 405 on /v1/chat/completions. Upgrade to https:// for those
+    hosts only; keep http:// for localhost, IPs, and single-label docker names.
+    """
+    url = (raw or "").strip()
+    if not url.startswith("http://"):
+        return url
+    try:
+        parsed = urlparse(url)
+    except Exception:
+        return url
+    host = parsed.hostname
+    if not host:
+        return url
+    if host == "localhost" or host.startswith("127."):
+        return url
+    try:
+        ipaddress.ip_address(host)
+        return url
+    except ValueError:
+        pass
+    if "." not in host:
+        return url
+    return "https://" + url[7:]
+
+
+def get_openai_client(model: str) -> OpenAI:
+    """Sync client for chat completions (same backend as async)."""
+    if model not in _VALID_LLM_MODELS:
+        raise ValueError(
+            f"Invalid model: {model}. Choose from: {', '.join(sorted(_VALID_LLM_MODELS))}"
+        )
+    base_url = _normalize_llm_base_url(os.getenv("DWANI_API_BASE_URL_LLM", ""))
+    return OpenAI(api_key="http", base_url=base_url)
+
+
+def get_async_openai_client(model: str) -> AsyncOpenAI:
+    """Async client for vision / PDF / transcribe flows."""
+    if model not in _VALID_LLM_MODELS:
+        raise ValueError(
+            f"Invalid model: {model}. Choose from: {', '.join(sorted(_VALID_LLM_MODELS))}"
+        )
+    base_url = _normalize_llm_base_url(os.getenv("DWANI_API_BASE_URL_LLM", ""))
+    return AsyncOpenAI(api_key="http", base_url=base_url)
+
+
+def encode_image(image: BytesIO) -> str:
+    """Encode image bytes from a BytesIO buffer to a base64 string."""
+    return base64.b64encode(image.read()).decode("utf-8")
+
+
+def _vllm_chat_completions_url() -> str:
+    base = _normalize_llm_base_url(os.getenv("DWANI_API_BASE_URL_LLM", "").strip())
+    if not base:
+        raise HTTPException(
+            status_code=503,
+            detail="LLM backend not configured (set DWANI_API_BASE_URL_LLM)",
+        )
+    return f"{base.rstrip('/')}/chat/completions"
+
+
+def _forward_headers_to_vllm(request: Request, body: bytes) -> dict[str, str]:
+    headers: dict[str, str] = {}
+    ct = request.headers.get("content-type")
+    if ct:
+        headers["Content-Type"] = ct
+    elif body:
+        headers["Content-Type"] = "application/json"
+    auth = request.headers.get("authorization")
+    if auth:
+        headers["Authorization"] = auth
+    return headers
+
+
+# ---------------------------------------------------------------------------
+# FastAPI application
+# ---------------------------------------------------------------------------
+_disable_api_docs = os.getenv("DISABLE_API_DOCS", "").lower() in ("1", "true", "yes")
+
 app = FastAPI(
     title="dwani.ai API",
-    description="A multimodal Inference API desgined for Privacy",
+    description="A multimodal inference API designed for privacy.",
     version="1.0.0",
     redirect_slashes=False,
+    docs_url=None if _disable_api_docs else "/docs",
+    redoc_url=None if _disable_api_docs else "/redoc",
+    openapi_url=None if _disable_api_docs else "/openapi.json",
     openapi_tags=[
         {"name": "Chat", "description": "Chat-related endpoints"},
         {"name": "Audio", "description": "Audio processing and TTS endpoints"},
@@ -109,7 +218,9 @@ app.add_middleware(
 )
 
 
-# Endpoints with enhanced Swagger docs
+# ---------------------------------------------------------------------------
+# Routes: health & documentation
+# ---------------------------------------------------------------------------
 @app.get("/v1/health", 
          summary="Check API Health",
          description="Returns the health status of the API and the current model in use.",
@@ -126,19 +237,56 @@ async def home():
     return RedirectResponse(url="/docs")
 
 
-# Supported models
-SUPPORTED_MODELS = ["gemma3", "moondream", "qwen2.5vl", "qwen3", "sarvam-m", "deepseek-r1"]
+# ---------------------------------------------------------------------------
+# Model and language constants
+# ---------------------------------------------------------------------------
+SUPPORTED_MODELS = ["gemma4", "moondream", "qwen2.5vl", "qwen3", "sarvam-m", "deepseek-r1"]
 
-SUPPORTED_LANGUAGES = [
-        "eng_Latn", "hin_Deva", "kan_Knda", "tam_Taml", "mal_Mlym", "tel_Telu",
-        "asm_Beng", "kas_Arab" , "pan_Guru","ben_Beng" , "kas_Deva" , "san_Deva",
-        "brx_Deva", "mai_Deva" , "sat_Olck" , "doi_Deva", "mal_Mlym", "snd_Arab",
-        "mar_Deva" , "snd_Deva", "gom_Deva", "mni_Beng", "guj_Gujr", "mni_Mtei",
-        "npi_Deva", "urd_Arab", "ory_Orya",
-        "deu_Latn", "fra_Latn", "nld_Latn", "spa_Latn", "ita_Latn", "por_Latn",
-        "rus_Cyrl", "pol_Latn"
-    ]
-from pydantic import BaseModel, Field, ConfigDict
+language_options = [
+    ("English", "eng_Latn"),
+    ("Kannada", "kan_Knda"),
+    ("Hindi", "hin_Deva"),
+    ("Assamese", "asm_Beng"),
+    ("Bengali", "ben_Beng"),
+    ("Gujarati", "guj_Gujr"),
+    ("Malayalam", "mal_Mlym"),
+    ("Marathi", "mar_Deva"),
+    ("Odia", "ory_Orya"),
+    ("Punjabi", "pan_Guru"),
+    ("Tamil", "tam_Taml"),
+    ("Telugu", "tel_Telu"),
+    ("German", "deu_Latn"),
+]
+
+code_to_name = {code: name for name, code in language_options}
+# Superset for validation (includes codes not listed in language_options / translate UI names).
+_SUPPORTED_LANG_EXTRA = frozenset(
+    {
+        "kas_Arab",
+        "kas_Deva",
+        "san_Deva",
+        "brx_Deva",
+        "mai_Deva",
+        "sat_Olck",
+        "doi_Deva",
+        "snd_Arab",
+        "snd_Deva",
+        "gom_Deva",
+        "mni_Beng",
+        "mni_Mtei",
+        "npi_Deva",
+        "urd_Arab",
+        "fra_Latn",
+        "nld_Latn",
+        "spa_Latn",
+        "ita_Latn",
+        "por_Latn",
+        "rus_Cyrl",
+        "pol_Latn",
+    }
+)
+SUPPORTED_LANGUAGES = {code for _, code in language_options} | _SUPPORTED_LANG_EXTRA
+
 
 class TranscriptionResponse(BaseModel):
     text: str = Field(..., description="Transcribed text from the audio")
@@ -147,75 +295,113 @@ class TranscriptionResponse(BaseModel):
         json_schema_extra={"example": {"text": "Hello, how are you?"}}
     )
 
-import httpx
+_TRANSCRIBE_TASK_PROMPT = (
+    "Transcribe the audio verbatim in its native script. "
+    "Output only the transcribed text. "
+    "Do not translate, explain, answer questions, or add labels or commentary."
+)
+
+
+def _transcription_only_text(raw: str) -> str:
+    s = raw.strip()
+    low = s.lower()
+    key = "response:"
+    if key in low:
+        s = s[: low.index(key)].strip()
+    for line in s.splitlines():
+        stripped = line.strip()
+        if stripped.lower().startswith("transcription:"):
+            return stripped.split(":", 1)[1].strip()
+    out_lines = []
+    for line in s.splitlines():
+        if line.strip().lower().startswith("language:"):
+            continue
+        out_lines.append(line)
+    return "\n".join(out_lines).strip() or raw.strip()
+
+
+# ---------------------------------------------------------------------------
+# Routes: audio (transcription)
+# ---------------------------------------------------------------------------
 @app.post("/v1/transcribe/", 
           response_model=TranscriptionResponse,
           summary="Transcribe Audio File",
-          description="Transcribe an audio file into text in the specified language.",
+          description="Transcribe audio via the chat completions API (gemma4 multimodal). Returns transcribed text only.",
           tags=["Audio"],
           responses={
               200: {"description": "Transcription result", "model": TranscriptionResponse},
-              400: {"description": "Invalid audio or language"},
+              400: {"description": "Invalid audio"},
               504: {"description": "Transcription service timeout"}
           })
 async def transcribe_audio(
     file: UploadFile = File(..., description="Audio file to transcribe"),
-    language: str = Query(..., description="Language of the audio (kannada, hindi, tamil, english, german)")
+    language: Optional[str] = Query(
+        None,
+        description="Optional legacy query param; ignored. Transcription is model-based.",
+    ),
 ):
-    # Validate language
-    allowed_languages = ["kannada", "hindi", "tamil", "english","german", "telugu" , "marathi" ]
-    if language not in allowed_languages:
-        raise HTTPException(status_code=400, detail=f"Language must be one of {allowed_languages}")
-    
     start_time = time.time()
-   
-    if( language in ["english", "german"]):
-        
-        file_content = await file.read()
-        files = {"file": (file.filename, file_content, file.content_type),
-#                'model': (None, 'Systran/faster-whisper-large-v3')
-                'model': (None, 'Systran/faster-whisper-small')
-        }
-        
-        response = httpx.post('http://localhost:8000/v1/audio/transcriptions', files=files, timeout=30.0)
+    file_content = await file.read()
+    if not file_content:
+        raise HTTPException(status_code=400, detail="Empty audio file")
 
-        if response.status_code == 200:
-            transcription = response.json().get("text", "")
-            if transcription:
-                logger.debug(f"Transcription completed in {time.time() - start_time:.2f} seconds")
-                return TranscriptionResponse(text=transcription)
-            else:
-                logger.debug("Transcription empty, try again.")
-                raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")
-        else:
-            logger.debug(f"Transcription error: {response.status_code} - {response.text}")
-            raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")
-    else: 
-        try:
-            file_content = await file.read()
-            files = {"file": (file.filename, file_content, file.content_type)}
-            
-            external_url = f"{os.getenv('DWANI_API_BASE_URL_ASR')}/transcribe/?language={language}"
-            
-            response = requests.post(
-                external_url,
-                files=files,
-                headers={"accept": "application/json"},
-                timeout=30
-            )
-            response.raise_for_status()
-            
-            transcription = response.json().get("text", "")
-            logger.debug(f"Transcription completed in {time.time() - start_time:.2f} seconds")
-            return TranscriptionResponse(text=transcription)
-        
-        except requests.Timeout:
-            logger.error("Transcription service timed out")
-            raise HTTPException(status_code=504, detail="Transcription service timeout")
-        except requests.RequestException as e:
-            logger.error(f"Transcription request failed: {str(e)}")
-            raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")
-        
+    mime = file.content_type or "audio/wav"
+    b64 = base64.standard_b64encode(file_content).decode("ascii")
+    audio_data_url = f"data:{mime};base64,{b64}"
+
+    model = "gemma4"
+    try:
+        client = get_async_openai_client(model)
+        response = await client.chat.completions.create(
+            model=model,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "audio_url", "audio_url": {"url": audio_data_url}},
+                        {"type": "text", "text": _TRANSCRIBE_TASK_PROMPT},
+                    ],
+                }
+            ],
+            temperature=0.2,
+            max_tokens=512,
+            timeout=60.0,
+        )
+    except APITimeoutError:
+        logger.error("Chat completions transcription timed out")
+        raise HTTPException(status_code=504, detail="Transcription service timeout")
+    except APIConnectionError as e:
+        logger.error(f"Chat completions request failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Transcription failed: {e}")
+    except APIStatusError as e:
+        err_body = getattr(e, "body", None)
+        err_detail = err_body if err_body is not None else getattr(e, "message", str(e))
+        logger.debug(f"Transcription error: {e.status_code} - {err_detail}")
+        raise HTTPException(
+            status_code=502,
+            detail=f"Chat completions error: {e.status_code} {err_detail}",
+        )
+    except OpenAIError as e:
+        logger.error(f"Transcription failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Transcription failed: {e}")
+
+    text = ""
+    if response.choices:
+        msg = response.choices[0].message
+        if msg and msg.content is not None:
+            text = str(msg.content).strip()
+
+    if not text:
+        logger.debug("Transcription empty from chat completions")
+        raise HTTPException(status_code=500, detail="Transcription failed: empty response")
+
+    text = _transcription_only_text(text)
+    if not text:
+        raise HTTPException(status_code=500, detail="Transcription failed: empty response")
+
+    logger.debug(f"Transcription completed in {time.time() - start_time:.2f} seconds")
+    return TranscriptionResponse(text=text)
+
 
 #model = YOLO("yolov8l.pt")  # example for large model with better accuracy
 
@@ -290,18 +476,14 @@ async def detect_image(
     return Response(content=img_encoded.tobytes(), media_type="image/jpeg")
 '''
 
-# Pydantic models (updated to include model validation)
-from typing import Dict, List, Optional
-from pydantic import BaseModel, Field, ConfigDict
-# Assuming SUPPORTED_MODELS is defined elsewhere
-# from your_module import SUPPORTED_MODELS
-
-
+# ---------------------------------------------------------------------------
+# Request / response schemas (Pydantic)
+# ---------------------------------------------------------------------------
 class VisualQueryRequest(BaseModel):
     query: str = Field(..., description="Text query", max_length=1000)
     src_lang: str = Field(..., description="Source language code")
     tgt_lang: str = Field(..., description="Target language code")
-    model: str = Field(default="gemma3", description="LLM model", enum=SUPPORTED_MODELS)
+    model: str = Field(default="gemma4", description="LLM model", enum=SUPPORTED_MODELS)
 
     model_config = ConfigDict(
         json_schema_extra={
@@ -316,7 +498,7 @@ class VisualQueryRequest(BaseModel):
 
 
 class OCRRequest(BaseModel):
-    model: str = Field(default="gemma3", description="LLM model", enum=SUPPORTED_MODELS)
+    model: str = Field(default="gemma4", description="LLM model", enum=SUPPORTED_MODELS)
 
     model_config = ConfigDict(
         json_schema_extra={
@@ -329,7 +511,7 @@ class OCRRequest(BaseModel):
 
 class VisualQueryDirectRequest(BaseModel):
     query: str = Field(..., description="Text query", max_length=1000)
-    model: str = Field(default="gemma3", description="LLM model", enum=SUPPORTED_MODELS)
+    model: str = Field(default="gemma4", description="LLM model", enum=SUPPORTED_MODELS)
 
     model_config = ConfigDict(
         json_schema_extra={
@@ -455,20 +637,6 @@ def validate_language(lang: str, field_name: str) -> str:
     return lang
 
 
-from typing import List
-from pydantic import BaseModel, Field, ConfigDict
-# If you have SUPPORTED_MODELS elsewhere, import it
-# from your_module import SUPPORTED_MODELS
-
-
-class TranscriptionResponse(BaseModel):
-    text: str = Field(..., description="Transcribed text from the audio")
-
-    model_config = ConfigDict(
-        json_schema_extra={"example": {"text": "Hello, how are you?"}}
-    )
-
-
 class TextGenerationResponse(BaseModel):
     text: str = Field(..., description="Generated text response")
 
@@ -489,7 +657,7 @@ class ChatRequest(BaseModel):
     prompt: str = Field(..., description="Prompt for chat (max 10000 characters)", max_length=10000)
     src_lang: str = Field(..., description="Source language code")
     tgt_lang: str = Field(..., description="Target language code")
-    model: str = Field(default="gemma3", description="LLM model")
+    model: str = Field(default="gemma4", description="LLM model")
 
     model_config = ConfigDict(
         json_schema_extra={
@@ -497,7 +665,7 @@ class ChatRequest(BaseModel):
                 "prompt": "Hello, how are you?",
                 "src_lang": "kan_Knda",
                 "tgt_lang": "kan_Knda",
-                "model": "gemma3"
+                "model": "gemma4"
             }
         }
     )
@@ -505,14 +673,14 @@ class ChatRequest(BaseModel):
 
 class ChatDirectRequest(BaseModel):
     prompt: str = Field(..., description="Prompt for chat (max 10000 characters)", max_length=10000)
-    model: str = Field(default="gemma3", description="LLM model")
+    model: str = Field(default="gemma4", description="LLM model")
     system_prompt: str = Field(default="", description="System prompt")
 
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
                 "prompt": "Hello, how are you?",
-                "model": "gemma3",
+                "model": "gemma4",
                 "system_prompt": ""
             }
         }
@@ -559,33 +727,9 @@ class TranslationResponse(BaseModel):
     )
 
 
-class VisualQueryRequest(BaseModel):
-    query: str = Field(..., description="Text query")
-    src_lang: str = Field(..., description="Source language code")
-    tgt_lang: str = Field(..., description="Target language code")
-    model: str = Field(default="gemma3", description="LLM model")
-
-    model_config = ConfigDict(
-        json_schema_extra={
-            "example": {
-                "query": "Describe the image",
-                "src_lang": "kan_Knda",
-                "tgt_lang": "kan_Knda",
-                "model": "gemma3"
-            }
-        }
-    )
-
-
-class VisualQueryResponse(BaseModel):
-    answer: str
-
-    model_config = ConfigDict(
-        json_schema_extra={"example": {"answer": "The image shows a screenshot of a webpage."}}
-    )
-
-import time
-
+# ---------------------------------------------------------------------------
+# Routes: audio (TTS / speech)
+# ---------------------------------------------------------------------------
 @app.post("/v1/audio/speech",
           summary="Generate Speech from Text",
           description="Convert text to speech using an external TTS service and return as a downloadable audio file.",
@@ -706,7 +850,83 @@ async def generate_audio(
         finally:
             # Close the temporary file to ensure it's fully written
             temp_file.close()
-    
+
+
+# ---------------------------------------------------------------------------
+# Routes: chat
+# ---------------------------------------------------------------------------
+@app.post(
+    "/v1/chat/completions",
+    tags=["Chat"],
+    summary="OpenAI-compatible chat completions (vLLM proxy)",
+    description=(
+        "Forwards the raw request body to the configured OpenAI-compatible "
+        "`POST .../v1/chat/completions` endpoint (DWANI_API_BASE_URL_LLM). "
+        'When the JSON body sets `"stream": true`, the upstream SSE stream is relayed.'
+    ),
+    response_model=None,
+    responses={
+        200: {"description": "Chat completion JSON or streamed events"},
+        502: {"description": "Upstream LLM error"},
+        503: {"description": "LLM URL not configured"},
+        504: {"description": "Upstream timeout"},
+    },
+)
+async def openai_chat_completions_proxy(request: Request):
+    body = await request.body()
+    upstream = _vllm_chat_completions_url()
+    fwd_headers = _forward_headers_to_vllm(request, body)
+
+    stream = False
+    if body:
+        try:
+            stream = json.loads(body).get("stream") is True
+        except (json.JSONDecodeError, TypeError, AttributeError):
+            pass
+
+    timeout = httpx.Timeout(600.0, connect=30.0)
+
+    try:
+        if stream:
+            client = httpx.AsyncClient(timeout=timeout)
+            stream_ctx = client.stream("POST", upstream, content=body, headers=fwd_headers)
+            try:
+                upstream_resp = await stream_ctx.__aenter__()
+            except Exception:
+                await client.aclose()
+                raise
+            status_code = upstream_resp.status_code
+            media_type = upstream_resp.headers.get(
+                "content-type", "text/event-stream; charset=utf-8"
+            )
+
+            async def streamed():
+                try:
+                    async for chunk in upstream_resp.aiter_bytes():
+                        yield chunk
+                finally:
+                    await stream_ctx.__aexit__(None, None, None)
+                    await client.aclose()
+
+            return StreamingResponse(
+                streamed(), status_code=status_code, media_type=media_type
+            )
+
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.post(upstream, content=body, headers=fwd_headers)
+    except httpx.TimeoutException:
+        logger.error("vLLM chat/completions proxy timed out")
+        raise HTTPException(status_code=504, detail="Upstream LLM timeout")
+    except httpx.RequestError as e:
+        logger.error(f"vLLM chat/completions proxy request error: {e}")
+        raise HTTPException(status_code=502, detail=f"Upstream LLM unreachable: {e}")
+
+    media_type = resp.headers.get("content-type", "application/json")
+    return Response(
+        content=resp.content, status_code=resp.status_code, media_type=media_type
+    )
+
+
 @app.post("/v1/indic_chat",
           response_model=ChatResponse,
           summary="Chat with AI",
@@ -729,7 +949,7 @@ async def chat_v2(
     # Validate model parameter
     logger.debug(f"Received prompt: {chat_request.prompt}, src_lang: {chat_request.src_lang}, tgt_lang: {chat_request.tgt_lang}, model: {chat_request.model}")
 
-    valid_models = ["gemma3", "qwen3", "sarvam-m", "gpt-oss"]
+    valid_models = ["gemma4", "qwen3", "sarvam-m", "gpt-oss"]
     if chat_request.model not in valid_models:
         raise HTTPException(status_code=400, detail=f"Invalid model. Choose from {valid_models}")
 
@@ -807,7 +1027,7 @@ async def chat_direct(
         raise HTTPException(status_code=400, detail="Prompt cannot exceed 10000 characters")
 
     # Validate model parameter
-    valid_models = ["gemma3", "qwen3", "sarvam-m", "gpt-oss"]
+    valid_models = ["gemma4", "qwen3", "sarvam-m", "gpt-oss"]
     if chat_request.model not in valid_models:
         raise HTTPException(status_code=400, detail=f"Invalid model. Choose from {valid_models}")
 
@@ -854,38 +1074,13 @@ async def chat_direct(
         raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
 
 
-from fastapi import HTTPException
-import json
-import logging
-
-
-# Language options mapping
-language_options = [
-    ("English", "eng_Latn"),
-    ("Kannada", "kan_Knda"),
-    ("Hindi", "hin_Deva"), 
-    ("Assamese", "asm_Beng"),
-    ("Bengali", "ben_Beng"),
-    ("Gujarati", "guj_Gujr"),
-    ("Malayalam", "mal_Mlym"),
-    ("Marathi", "mar_Deva"),
-    ("Odia", "ory_Orya"),
-    ("Punjabi", "pan_Guru"),
-    ("Tamil", "tam_Taml"),
-    ("Telugu", "tel_Telu"),
-    ("German", "deu_Latn") 
-]
-
-# Mapping from code to language name
-code_to_name = {code: name for name, code in language_options}
-
-# Assuming SUPPORTED_LANGUAGES is defined as set of codes
-SUPPORTED_LANGUAGES = {code for _, code in language_options}
-
+# ---------------------------------------------------------------------------
+# Routes: translation
+# ---------------------------------------------------------------------------
 @app.post("/v1/translate", 
           response_model=TranslationResponse,
           summary="Translate Text",
-          description="Translate a list of sentences from a source to a target language.",
+          description="Translate a list of sentences via the configured LLM (same backend as chat; DWANI_API_BASE_URL_LLM).",
           tags=["Translation"],
           responses={
               200: {"description": "Translation result", "model": TranslationResponse},
@@ -910,7 +1105,7 @@ async def translate(
 
     logger.debug(f"Received translation request: {len(request.sentences)} sentences, src_lang: {request.src_lang} ({src_name}), tgt_lang: {request.tgt_lang} ({tgt_name})")
 
-    model = "gemma3"
+    model = "gemma4"
     client = get_openai_client(model)
 
     system_prompt = f"You are a professional translator. Translate the following list of sentences from {src_name} to {tgt_name}. Respond ONLY with a valid JSON array of the translated sentences in the same order, without any additional text or explanations."
@@ -992,31 +1187,6 @@ async def translate(
         logger.error(f"Error during translation: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Translation failed: {str(e)}")
 
-from pydantic import BaseModel, ConfigDict
-
-class VisualQueryResponse(BaseModel):
-    answer: str
-
-    model_config = ConfigDict(
-        json_schema_extra={"example": {"answer": "The image shows a screenshot of a webpage."}}
-    )
-
-
-language_options = [
-    ("English", "eng_Latn"),
-    ("Kannada", "kan_Knda"),
-    ("Hindi", "hin_Deva"), 
-    ("Assamese", "asm_Beng"),
-    ("Bengali","ben_Beng"),
-    ("Gujarati","guj_Gujr"),
-    ("Malayalam","mal_Mlym"),
-    ("Marathi","mar_Deva"),
-    ("Odia","ory_Orya"),
-    ("Punjabi","pan_Guru"),
-    ("Tamil","tam_Taml"),
-    ("Telugu","tel_Telu"),
-    ("German","deu_Latn"),
-]
 
 def get_language_name(lang_code):
     for name, code in language_options:
@@ -1024,7 +1194,10 @@ def get_language_name(lang_code):
             return name
     return "English"
 
-# Visual Query Endpoint
+
+# ---------------------------------------------------------------------------
+# Routes: vision / visual query
+# ---------------------------------------------------------------------------
 @app.post("/v1/indic_visual_query",
           response_model=VisualQueryResponse,
           summary="Visual Query with Image",
@@ -1042,7 +1215,7 @@ async def visual_query(
     file: UploadFile = File(..., description="Image file to analyze (PNG only)"),
     src_lang: str = Query(..., description="Source language code (e.g., eng_Latn, kan_Knda)"),
     tgt_lang: str = Query(..., description="Target language code (e.g., eng_Latn, kan_Knda)"),
-    model: str = Query(default="gemma3", description="LLM model", enum=SUPPORTED_MODELS)
+    model: str = Query(default="gemma4", description="LLM model", enum=SUPPORTED_MODELS)
 ):
     # Validate query
     if not query.strip():
@@ -1113,7 +1286,7 @@ async def visual_query_direct(
     request: Request,
     query: str = Form(..., description="Text query to describe or analyze the image (e.g., 'describe the image')"),
     file: UploadFile = File(..., description="Image file to analyze (PNG only)"),
-    model: str = Query(default="gemma3", description="LLM model", enum=SUPPORTED_MODELS)
+    model: str = Query(default="gemma4", description="LLM model", enum=SUPPORTED_MODELS)
 ):
     # Validate query
     if not query.strip():
@@ -1164,7 +1337,6 @@ async def visual_query_direct(
         logger.error(f"Invalid JSON response: {str(e)}")
         raise HTTPException(status_code=500, detail="Invalid response format from visual query direct service")
 
-from enum import Enum
 
 class SupportedLanguage(str, Enum):
     kannada = "kannada"
@@ -1230,13 +1402,11 @@ async def speech_to_speech(
     except requests.RequestException as e:
         logger.error(f"External speech-to-speech API error: {str(e)}")
         raise HTTPException(status_code=500, detail=f"External API error: {str(e)}")
-    
 
-'''
-Upgrading system to use Vllm server
-'''
 
-# Extract Text Endpoint
+# ---------------------------------------------------------------------------
+# Routes: PDF (extract, summarize, custom prompts)
+# ---------------------------------------------------------------------------
 @app.post("/v1/extract-text",
           response_model=PDFTextExtractionResponse,
           summary="Extract Text from PDF",
@@ -1252,7 +1422,7 @@ async def extract_text(
     request: Request,
     file: UploadFile = File(..., description="PDF file to extract text from"),
     page_number: int = Query(1, description="Page number to extract text from (1-based indexing)", ge=1),
-    model: str = Query(default="gemma3", description="LLM model", enum=SUPPORTED_MODELS)
+    model: str = Query(default="gemma4", description="LLM model", enum=SUPPORTED_MODELS)
 ):
     if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files supported")
@@ -1319,7 +1489,7 @@ async def extract_text(
 async def extract_text_all(
     request: Request,
     file: UploadFile = File(..., description="PDF file to extract text from"),
-    model: str = Query(default="gemma3", description="LLM model", enum=SUPPORTED_MODELS)
+    model: str = Query(default="gemma4", description="LLM model", enum=SUPPORTED_MODELS)
 ):
     if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files supported")
@@ -1394,7 +1564,7 @@ async def extract_text_all(
 async def extract_text_all_chunk(
     request: Request,
     file: UploadFile = File(..., description="PDF file to extract text from"),
-    model: str = Query(default="gemma3", description="LLM model", enum=SUPPORTED_MODELS)
+    model: str = Query(default="gemma4", description="LLM model", enum=SUPPORTED_MODELS)
 ):
     if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files supported")
@@ -1473,7 +1643,7 @@ async def extract_and_translate(
     page_number: int = Form(1, description="Page number to extract text from (1-based indexing)", ge=1),
     src_lang: str = Form("eng_Latn", description="Source language code (e.g., eng_Latn)"),
     tgt_lang: str = Form("kan_Knda", description="Target language code (e.g., kan_Knda)"),
-    model: str = Form(default="gemma3", description="LLM model", enum=SUPPORTED_MODELS)
+    model: str = Form(default="gemma4", description="LLM model", enum=SUPPORTED_MODELS)
 ):
     if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files supported")
@@ -1559,7 +1729,7 @@ async def summarize_pdf(
     request: Request,
     file: UploadFile = File(..., description="PDF file to summarize"),
     page_number: int = Form(..., description="Page number to summarize (1-based indexing)", ge=1),
-    model: str = Form(default="gemma3", description="LLM model", enum=SUPPORTED_MODELS)
+    model: str = Form(default="gemma4", description="LLM model", enum=SUPPORTED_MODELS)
 ):
     if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="File must be a PDF")
@@ -1640,7 +1810,7 @@ async def indic_summarize_pdf(
     file: UploadFile = File(..., description="PDF file to summarize"),
     page_number: int = Form(..., description="Page number to summarize (1-based indexing)", ge=1),
     tgt_lang: str = Form("kan_Knda", description="Target language code (e.g., kan_Knda)"),  # Default added
-    model: str = Form(default="gemma3", description="LLM model", enum=SUPPORTED_MODELS)
+    model: str = Form(default="gemma4", description="LLM model", enum=SUPPORTED_MODELS)
 ):
     logger.debug(f"Processing indic summarize PDF: page_number={page_number}, model={model}, tgt_lang={tgt_lang} and file={file.filename}")
 
@@ -1716,13 +1886,6 @@ async def indic_summarize_pdf(
         logger.error(f"Invalid JSON response from external API: {str(e)}")
         raise HTTPException(status_code=500, detail="Invalid response format from external API")
 
-from pdf2image import convert_from_path
-from io import BytesIO
-
-
-def encode_image(image: BytesIO) -> str:
-    """Encode image bytes to base64 string."""
-    return base64.b64encode(image.read()).decode("utf-8")
 
 async def get_base64_msg_from_pdf(file):
     try:
@@ -1786,8 +1949,6 @@ async def render_pdf_to_png(pdf_file):
     return images
 
 
-import re
-
 def sanitize_json_string(s: str) -> str:
     """Sanitize a string to ensure it is valid for JSON parsing."""
     if not s:
@@ -1806,7 +1967,7 @@ def sanitize_json_string(s: str) -> str:
 
 async def extract_text_batch_from_pdf(
     file: UploadFile = File(...),
-    model: str = Body("gemma3", embed=True)
+    model: str = Body("gemma4", embed=True)
 ) -> JSONResponse:
     """Extract text from all PDF pages in a single batch request."""
     temp_file_path = None
@@ -1880,7 +2041,7 @@ async def extract_text_batch_from_pdf(
             os.remove(temp_file_path)
 
 
-async def extract_text_from_pdf(file: UploadFile = File(...), model: str = Body("gemma3", embed=True)) -> JSONResponse:
+async def extract_text_from_pdf(file: UploadFile = File(...), model: str = Body("gemma4", embed=True)) -> JSONResponse:
     """Extract text from all PDF pages one at a time."""
     try:
         if not file.filename.lower().endswith(".pdf"):
@@ -1935,37 +2096,11 @@ async def extract_text_from_pdf(file: UploadFile = File(...), model: str = Body(
         logger.error(f"Error in extract_text_from_pdf: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
     finally:
-        await file.close()    
-
-from openai import AsyncOpenAI
-
-def encode_image(image: BytesIO) -> str:
-    """Encode image bytes to base64 string."""
-    return base64.b64encode(image.read()).decode("utf-8")
-
-def get_async_openai_client(model: str) -> AsyncOpenAI:
-    """Initialize AsyncOpenAI client with model-specific base URL."""
-    valid_models = ["gemma3"]
-    if model not in valid_models:
-        raise ValueError(f"Invalid model: {model}. Choose from: {', '.join(valid_models)}")
-    
-
-    base_url = f"{os.getenv('DWANI_API_BASE_URL_LLM')}"
-
-    return AsyncOpenAI(api_key="http", base_url=base_url)
-
-
-
-
-from io import BytesIO
-from typing import List, Literal, Optional
-import base64
-from pydantic import BaseModel
-
+        await file.close()
 
 
 async def extract_text_file(pdf_file):
-    model="gemma3"
+    model="gemma4"
     client = get_async_openai_client(model)
     images = await render_pdf_to_png(pdf_file)
     result = ""
@@ -2000,7 +2135,7 @@ async def extract_text_file(pdf_file):
     return result
 
 async def extract_text_page(pdf_file, page_number):
-    model="gemma3"
+    model="gemma4"
     client = get_async_openai_client(model)
     images = await render_pdf_to_png(pdf_file)
     
@@ -2037,18 +2172,9 @@ async def extract_text_page(pdf_file, page_number):
     return raw_response
 
 
-
-from fastapi import FastAPI, File, UploadFile, HTTPException
-from fastapi.responses import JSONResponse
-from pydantic import BaseModel
-from typing import List
-import asyncio
-
-from io import BytesIO
-from PIL import Image
-import base64
-
-
+# ---------------------------------------------------------------------------
+# App PDF text extraction (upload helper)
+# ---------------------------------------------------------------------------
 class ExtractionResponse(BaseModel):
     extracted_text: str
     page_count: int
@@ -2066,7 +2192,7 @@ async def app_extract_text_from_pdf(pdf_file: UploadFile) -> str:
     Core extraction logic based on your original async function.
     Processes PDF pages as images and extracts text using a vision model.
     """
-    model = "gemma3"  # or whatever vision model you're using (e.g., gpt-4o, gemma3, etc.)
+    model = "gemma4"  # or whatever vision model you're using (e.g., gpt-4o, gemma4, etc.)
     client = get_async_openai_client(model)
     
     # Convert PDF pages to images
@@ -2147,30 +2273,6 @@ async def extract_text_endpoint(file: UploadFile = File(...)):
         raise HTTPException(status_code=500, detail=f"Text extraction failed: {str(e)}")
 
 
-
-import base64
-from io import BytesIO
-from pdf2image import convert_from_path
-import os
-import asyncio
-import re
-
-async def render_pdf_to_png(pdf_file):
-    """Convert PDF to images."""
-    try:
-        with open("temp.pdf", "wb") as f:
-            f.write(await pdf_file.read())
-        images = convert_from_path("temp.pdf")
-    except Exception as e:
-        logger.error(f"PDF conversion failed: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Failed to convert PDF to images: {str(e)}")
-    finally:
-        if os.path.exists("temp.pdf"):
-            os.remove("temp.pdf")
-
-    return images
-
-
 @app.post("/v1/indic-summarize-pdf-all",
           response_model=IndicSummarizeAllPDFResponse,
           summary="Summarize and Translate a Specific Page of a PDF",
@@ -2186,7 +2288,7 @@ async def indic_summarize_pdf_all(
     request: Request,
     file: UploadFile = File(..., description="PDF file to summarize"),
     tgt_lang: str = Form("kan_Knda", description="Target language code (e.g., kan_Knda)"),
-    model: str = Form(default="gemma3", description="LLM model", enum=["gemma3"])  # Adjust SUPPORTED_MODELS as needed
+    model: str = Form(default="gemma4", description="LLM model", enum=["gemma4"])  # Adjust SUPPORTED_MODELS as needed
 ):
     logger.debug(f"Processing indic summarize PDF: model={model}, tgt_lang={tgt_lang}, file={file.filename}")
 
@@ -2269,7 +2371,7 @@ async def custom_prompt_pdf(
     file: UploadFile = File(..., description="PDF file to process"),
     page_number: int = Form(..., description="Page number to process (1-based indexing)", ge=1),
     prompt: str = Form(..., description="Custom prompt to process the page content"),
-    model: str = Form(default="gemma3", description="LLM model", enum=SUPPORTED_MODELS)
+    model: str = Form(default="gemma4", description="LLM model", enum=SUPPORTED_MODELS)
 ):
     if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="File must be a PDF")
@@ -2354,7 +2456,7 @@ async def indic_custom_prompt_pdf(
     prompt: str = Form(..., description="Custom prompt to process the page content"),
     query_lang: str = Form("eng_Latn", description="Query language code (e.g., eng_Latn)"),  # Default added
     tgt_lang: str = Form("kan_Knda", description="Target language code (e.g., kan_Knda)"),  # Default added
-    model: str = Form(default="gemma3", description="LLM model", enum=SUPPORTED_MODELS)
+    model: str = Form(default="gemma4", description="LLM model", enum=SUPPORTED_MODELS)
 ):
     if not file.filename.lower().endswith('.pdf'):
         raise HTTPException(status_code=400, detail="File must be a PDF")
@@ -2473,7 +2575,7 @@ async def indic_custom_prompt_pdf_all(
     prompt: str = Form(..., description="Custom prompt to process the page content"),
     query_lang: str = Form("eng_Latn", description="Source language code (e.g., eng_Latn)"),  # Default added
     tgt_lang: str = Form("kan_Knda", description="Target language code (e.g., kan_Knda)"),  # Default added
-    model: str = Form(default="gemma3", description="LLM model", enum=SUPPORTED_MODELS)
+    model: str = Form(default="gemma4", description="LLM model", enum=SUPPORTED_MODELS)
 ):
     if not file.filename.lower().endswith('.pdf'):
         raise HTTPException(status_code=400, detail="File must be a PDF")
@@ -2667,30 +2769,6 @@ async def indic_custom_prompt_kannada_pdf(
         temp_file.close()
 
 
-
-from pydantic import BaseModel, ValidationError
-
-from io import BytesIO
-from openai import OpenAI
-import base64
-
-# Dynamic LLM client based on model
-def get_openai_client(model: str) -> OpenAI:
-    """Initialize OpenAI client with model-specific base URL."""
-    valid_models = ["gemma3"]
-    if model not in valid_models:
-        raise ValueError(f"Invalid model: {model}. Choose from: {', '.join(valid_models)}")
-    
-    base_url = f"{os.getenv('DWANI_API_BASE_URL_LLM')}"
-    
-    return OpenAI(api_key="http", base_url=base_url)
-
-
-def encode_image(image: BytesIO) -> str:
-    """Encode image bytes to base64 string."""
-    return base64.b64encode(image.read()).decode("utf-8")
-
-
 ocr_query_string = "Return the plain text extracted from this image."
 
 def ocr_page_with_rolm_query(img_base64: str, query:str,  model: str) -> str:
@@ -2766,7 +2844,7 @@ def vision_query(img_base64: str, user_query:str,  model: str, system_prompt:str
 async def ocr_query(
     request: Request,
     file: UploadFile = File(..., description="Image file to analyze (PNG only)"),
-    model: str = Query(default="gemma3", description="LLM model", enum=SUPPORTED_MODELS)
+    model: str = Query(default="gemma4", description="LLM model", enum=SUPPORTED_MODELS)
 ):
     # Validate model
     validate_model(model)
@@ -2810,18 +2888,16 @@ async def ocr_image(file: UploadFile = File(...)):
         image_bytes = await file.read()
         image = BytesIO(image_bytes)
         img_base64 = encode_image(image)
-        text = ocr_page_with_rolm_query(img_base64, ocr_query_string ,  model="gemma3")
+        text = ocr_page_with_rolm_query(img_base64, ocr_query_string ,  model="gemma4")
         return {"extracted_text": text}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error processing image: {str(e)}")
 
 
-from fastapi.responses import JSONResponse, FileResponse
-
 async def indic_visual_query_direct(
     file: UploadFile = File(..., description="PNG image file to analyze"),
     prompt: Optional[str] = Form(None, description="Optional custom prompt to process the extracted text"),
-    model: str = Form("gemma3", description="LLM model", enum=["gemma3", "moondream", "smolvla"])
+    model: str = Form("gemma4", description="LLM model", enum=["gemma4", "moondream", "smolvla"])
 ):
     try:
         if not file.content_type.startswith("image/png"):
@@ -2863,14 +2939,6 @@ if __name__ == "__main__":
     external_api_base_url_tts = os.getenv("DWANI_API_BASE_URL_TTS")
     if not external_api_base_url_tts:
         raise ValueError("Environment variable DWANI_API_BASE_URL_TTS must be set")
-    
-    external_api_base_url_asr = os.getenv("DWANI_API_BASE_URL_ASR")
-    if not external_api_base_url_asr:
-        raise ValueError("Environment variable DWANI_API_BASE_URL_ASR must be set")
-    
-    external_api_base_url_translate = os.getenv("DWANI_API_BASE_URL_TRANSLATE")
-    if not external_api_base_url_translate:
-        raise ValueError("Environment variable DWANI_API_BASE_URL_TRANSLATE must be set")
     
     external_api_base_url_speech_to_speech = os.getenv("DWANI_API_BASE_URL_S2S")
     if not external_api_base_url_speech_to_speech:

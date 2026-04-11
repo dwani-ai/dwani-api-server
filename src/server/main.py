@@ -295,6 +295,57 @@ class TranscriptionResponse(BaseModel):
         json_schema_extra={"example": {"text": "Hello, how are you?"}}
     )
 
+
+class VoiceTranslateResponse(BaseModel):
+    transcription: str = Field(..., description="Transcribed text in the input (source) language")
+    translation: str = Field(..., description="Translated text in the output (target) language")
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "transcription": "ನಮಸ್ಕಾರ",
+                "translation": "Hello",
+            }
+        }
+    )
+
+
+def _voice_translate_prompt(source_language: str, target_language: str) -> str:
+    src = source_language.strip()
+    tgt = target_language.strip()
+    return (
+        f"Transcribe the following speech segment in {src}, then translate it into {tgt}.\n"
+        f"When formatting the answer, first output the transcription in {src}, then one newline, "
+        f"then output the string '{tgt}: ', then the translation in {tgt}."
+    )
+
+
+def _parse_voice_translate_output(raw: str, output_language: str) -> tuple[str, str]:
+    output_lang = output_language.strip()
+    s = raw.strip()
+    if not output_lang:
+        raise ValueError("empty output_language")
+    label_pattern = re.compile(r"^\s*" + re.escape(output_lang) + r"\s*:\s*", re.IGNORECASE)
+    lines = s.splitlines()
+    split_idx = None
+    for i, line in enumerate(lines):
+        if label_pattern.match(line):
+            split_idx = i
+            break
+    if split_idx is None:
+        raise ValueError("no target language label line")
+    transcription = "\n".join(lines[:split_idx]).strip()
+    m = label_pattern.match(lines[split_idx])
+    assert m is not None
+    first_rest = lines[split_idx][m.end() :]
+    rest_block = lines[split_idx + 1 :]
+    chunks = [first_rest] + rest_block
+    translation = "\n".join(c.rstrip() for c in chunks).strip()
+    if not transcription or not translation:
+        raise ValueError("empty transcription or translation")
+    return transcription, translation
+
+
 _TRANSCRIBE_TASK_PROMPT = (
     "Transcribe the audio verbatim in its native script. "
     "Output only the transcribed text. "
@@ -401,6 +452,102 @@ async def transcribe_audio(
 
     logger.debug(f"Transcription completed in {time.time() - start_time:.2f} seconds")
     return TranscriptionResponse(text=text)
+
+
+@app.post(
+    "/v1/translate_voice/",
+    response_model=VoiceTranslateResponse,
+    summary="Translate Voice (Transcribe + Translate)",
+    description=(
+        "Transcribe audio in the given source language and translate to the target language "
+        "via the chat completions API (gemma4 multimodal). Returns both strings."
+    ),
+    tags=["Audio"],
+    responses={
+        200: {"description": "Transcription and translation", "model": VoiceTranslateResponse},
+        400: {"description": "Invalid audio or language parameters"},
+        504: {"description": "Service timeout"},
+    },
+)
+async def translate_voice(
+    file: UploadFile = File(..., description="Audio file to transcribe and translate"),
+    input_language: str = Query(..., description="Name of the language spoken in the audio (source)"),
+    output_language: str = Query(..., description="Name of the language for the translation (target)"),
+):
+    src = input_language.strip()
+    tgt = output_language.strip()
+    if not src:
+        raise HTTPException(status_code=400, detail="input_language must be non-empty")
+    if not tgt:
+        raise HTTPException(status_code=400, detail="output_language must be non-empty")
+
+    start_time = time.time()
+    file_content = await file.read()
+    if not file_content:
+        raise HTTPException(status_code=400, detail="Empty audio file")
+
+    mime = file.content_type or "audio/wav"
+    b64 = base64.standard_b64encode(file_content).decode("ascii")
+    audio_data_url = f"data:{mime};base64,{b64}"
+    prompt = _voice_translate_prompt(src, tgt)
+
+    model = "gemma4"
+    try:
+        client = get_async_openai_client(model)
+        response = await client.chat.completions.create(
+            model=model,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "audio_url", "audio_url": {"url": audio_data_url}},
+                        {"type": "text", "text": prompt},
+                    ],
+                }
+            ],
+            temperature=0.2,
+            max_tokens=896,
+            timeout=60.0,
+        )
+    except APITimeoutError:
+        logger.error("Chat completions translate_voice timed out")
+        raise HTTPException(status_code=504, detail="Transcription service timeout")
+    except APIConnectionError as e:
+        logger.error(f"Chat completions request failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Translate voice failed: {e}")
+    except APIStatusError as e:
+        err_body = getattr(e, "body", None)
+        err_detail = err_body if err_body is not None else getattr(e, "message", str(e))
+        logger.debug(f"Translate voice error: {e.status_code} - {err_detail}")
+        raise HTTPException(
+            status_code=502,
+            detail=f"Chat completions error: {e.status_code} {err_detail}",
+        )
+    except OpenAIError as e:
+        logger.error(f"Translate voice failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Translate voice failed: {e}")
+
+    text = ""
+    if response.choices:
+        msg = response.choices[0].message
+        if msg and msg.content is not None:
+            text = str(msg.content).strip()
+
+    if not text:
+        logger.debug("Translate voice empty from chat completions")
+        raise HTTPException(status_code=500, detail="Translate voice failed: empty response")
+
+    try:
+        transcription, translation = _parse_voice_translate_output(text, tgt)
+    except ValueError as e:
+        logger.debug(f"Translate voice parse error: {e}; raw={text!r}")
+        raise HTTPException(
+            status_code=500,
+            detail="Could not parse transcription/translation from model response",
+        )
+
+    logger.debug(f"Translate voice completed in {time.time() - start_time:.2f} seconds")
+    return VoiceTranslateResponse(transcription=transcription, translation=translation)
 
 
 #model = YOLO("yolov8l.pt")  # example for large model with better accuracy

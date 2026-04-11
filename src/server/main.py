@@ -295,6 +295,107 @@ class TranscriptionResponse(BaseModel):
         json_schema_extra={"example": {"text": "Hello, how are you?"}}
     )
 
+
+class VoiceTranslateResponse(BaseModel):
+    transcription: str = Field(..., description="Transcribed text in the input (source) language")
+    translation: str = Field(..., description="Translated text in the output (target) language")
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "transcription": "ನಮಸ್ಕಾರ",
+                "translation": "Hello",
+            }
+        }
+    )
+
+
+def _voice_translate_prompt(source_language: str, target_language: str) -> str:
+    src = source_language.strip()
+    tgt = target_language.strip()
+    return (
+        f"Transcribe the following speech segment in {src}, then translate it into {tgt}.\n"
+        f"When formatting the answer, first output the transcription in {src}, then one newline, "
+        f"then output the string '{tgt}: ', then the translation in {tgt}."
+    )
+
+
+def _parse_voice_translate_output(raw: str, output_language: str) -> tuple[str, str]:
+    output_lang = output_language.strip()
+    s = raw.strip()
+    if not output_lang:
+        raise ValueError("empty output_language")
+    label_pattern = re.compile(r"^\s*" + re.escape(output_lang) + r"\s*:\s*", re.IGNORECASE)
+    lines = s.splitlines()
+    split_idx = None
+    for i, line in enumerate(lines):
+        if label_pattern.match(line):
+            split_idx = i
+            break
+    if split_idx is None:
+        raise ValueError("no target language label line")
+    transcription = "\n".join(lines[:split_idx]).strip()
+    m = label_pattern.match(lines[split_idx])
+    assert m is not None
+    first_rest = lines[split_idx][m.end() :]
+    rest_block = lines[split_idx + 1 :]
+    chunks = [first_rest] + rest_block
+    translation = "\n".join(c.rstrip() for c in chunks).strip()
+    if not transcription or not translation:
+        raise ValueError("empty transcription or translation")
+    return transcription, translation
+
+
+def _parse_translation_llm_output(raw: Optional[str], expected_count: int) -> List[str]:
+    """Parse model output into a list of translated strings (fence strip + JSON)."""
+    if raw is None or not str(raw).strip():
+        raise ValueError("empty model response")
+    s = str(raw).strip()
+    s = re.sub(r"^```(?:json)?\n|\n```$", "", s, flags=re.MULTILINE).strip()
+    if not s.startswith("{") and not s.startswith("["):
+        start_obj = s.find("{")
+        start_arr = s.find("[")
+        starts = [x for x in (start_obj, start_arr) if x >= 0]
+        if starts:
+            start = min(starts)
+            s = s[start:]
+            if s.startswith("{"):
+                end = s.rfind("}")
+                if end != -1:
+                    s = s[: end + 1]
+            else:
+                end = s.rfind("]")
+                if end != -1:
+                    s = s[: end + 1]
+    try:
+        data = json.loads(s)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"invalid JSON in translation response: {e}") from e
+
+    translations: List[str]
+    if isinstance(data, dict):
+        inner = data.get("translations")
+        if not isinstance(inner, list):
+            raise ValueError("response JSON must contain a 'translations' array")
+        if not inner or not all(isinstance(item, str) for item in inner):
+            raise ValueError("'translations' must be a non-empty array of strings")
+        translations = list(inner)
+    elif isinstance(data, list):
+        if not data or not all(isinstance(item, str) for item in data):
+            raise ValueError("response must be a JSON array of strings")
+        translations = list(data)
+    else:
+        raise ValueError(
+            "response must be a JSON object with key 'translations' or a JSON array of strings"
+        )
+
+    if len(translations) != expected_count:
+        raise ValueError(
+            f"expected {expected_count} translation(s), got {len(translations)}"
+        )
+    return translations
+
+
 _TRANSCRIBE_TASK_PROMPT = (
     "Transcribe the audio verbatim in its native script. "
     "Output only the transcribed text. "
@@ -401,6 +502,102 @@ async def transcribe_audio(
 
     logger.debug(f"Transcription completed in {time.time() - start_time:.2f} seconds")
     return TranscriptionResponse(text=text)
+
+
+@app.post(
+    "/v1/translate_voice/",
+    response_model=VoiceTranslateResponse,
+    summary="Translate Voice (Transcribe + Translate)",
+    description=(
+        "Transcribe audio in the given source language and translate to the target language "
+        "via the chat completions API (gemma4 multimodal). Returns both strings."
+    ),
+    tags=["Audio"],
+    responses={
+        200: {"description": "Transcription and translation", "model": VoiceTranslateResponse},
+        400: {"description": "Invalid audio or language parameters"},
+        504: {"description": "Service timeout"},
+    },
+)
+async def translate_voice(
+    file: UploadFile = File(..., description="Audio file to transcribe and translate"),
+    input_language: str = Query(..., description="Name of the language spoken in the audio (source)"),
+    output_language: str = Query(..., description="Name of the language for the translation (target)"),
+):
+    src = input_language.strip()
+    tgt = output_language.strip()
+    if not src:
+        raise HTTPException(status_code=400, detail="input_language must be non-empty")
+    if not tgt:
+        raise HTTPException(status_code=400, detail="output_language must be non-empty")
+
+    start_time = time.time()
+    file_content = await file.read()
+    if not file_content:
+        raise HTTPException(status_code=400, detail="Empty audio file")
+
+    mime = file.content_type or "audio/wav"
+    b64 = base64.standard_b64encode(file_content).decode("ascii")
+    audio_data_url = f"data:{mime};base64,{b64}"
+    prompt = _voice_translate_prompt(src, tgt)
+
+    model = "gemma4"
+    try:
+        client = get_async_openai_client(model)
+        response = await client.chat.completions.create(
+            model=model,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "audio_url", "audio_url": {"url": audio_data_url}},
+                        {"type": "text", "text": prompt},
+                    ],
+                }
+            ],
+            temperature=0.2,
+            max_tokens=896,
+            timeout=60.0,
+        )
+    except APITimeoutError:
+        logger.error("Chat completions translate_voice timed out")
+        raise HTTPException(status_code=504, detail="Transcription service timeout")
+    except APIConnectionError as e:
+        logger.error(f"Chat completions request failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Translate voice failed: {e}")
+    except APIStatusError as e:
+        err_body = getattr(e, "body", None)
+        err_detail = err_body if err_body is not None else getattr(e, "message", str(e))
+        logger.debug(f"Translate voice error: {e.status_code} - {err_detail}")
+        raise HTTPException(
+            status_code=502,
+            detail=f"Chat completions error: {e.status_code} {err_detail}",
+        )
+    except OpenAIError as e:
+        logger.error(f"Translate voice failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Translate voice failed: {e}")
+
+    text = ""
+    if response.choices:
+        msg = response.choices[0].message
+        if msg and msg.content is not None:
+            text = str(msg.content).strip()
+
+    if not text:
+        logger.debug("Translate voice empty from chat completions")
+        raise HTTPException(status_code=500, detail="Translate voice failed: empty response")
+
+    try:
+        transcription, translation = _parse_voice_translate_output(text, tgt)
+    except ValueError as e:
+        logger.debug(f"Translate voice parse error: {e}; raw={text!r}")
+        raise HTTPException(
+            status_code=500,
+            detail="Could not parse transcription/translation from model response",
+        )
+
+    logger.debug(f"Translate voice completed in {time.time() - start_time:.2f} seconds")
+    return VoiceTranslateResponse(transcription=transcription, translation=translation)
 
 
 #model = YOLO("yolov8l.pt")  # example for large model with better accuracy
@@ -1108,8 +1305,19 @@ async def translate(
     model = "gemma4"
     client = get_openai_client(model)
 
-    system_prompt = f"You are a professional translator. Translate the following list of sentences from {src_name} to {tgt_name}. Respond ONLY with a valid JSON array of the translated sentences in the same order, without any additional text or explanations."
-    
+    system_prompt = (
+        f"You are a professional translator. The user will send numbered sentences. "
+        f"Translate each line from {src_name} to {tgt_name}, preserving order.\n\n"
+        "Respond with ONLY valid JSON (no markdown code fences, no commentary before or after). "
+        'The JSON must be exactly one object with a single key "translations" whose value is a JSON array of strings. '
+        "There must be exactly as many strings as input lines.\n\n"
+        "Example (illustrative only — your actual task uses the language pair stated above, not necessarily English and Spanish). "
+        "If the input were:\n"
+        "1. Hello\n"
+        "2. Thank you\n\n"
+        'then the correct output would be:\n{"translations":["Hola","Gracias"]}'
+    )
+
     sentences_text = "\n".join([f"{i+1}. {sentence}" for i, sentence in enumerate(request.sentences)])
     user_prompt = f"Sentences to translate:\n\n{sentences_text}"
 
@@ -1126,56 +1334,25 @@ async def translate(
                     "content": user_prompt
                 }
             ],
-            temperature=0.1,  # Low temperature for consistent translations
-            max_tokens=2000   # Adjust based on expected output length
+            temperature=0.1,
+            max_tokens=2000,
+            response_format={"type": "json_object"},
         )
 
-        query_answer = response.choices[0].message.content.strip()
+        choice = response.choices[0] if response.choices else None
+        msg = choice.message if choice else None
+        raw_content = msg.content if msg else None
+        if raw_content is None or not str(raw_content).strip():
+            raise HTTPException(status_code=500, detail="Translation model returned empty content")
 
-        # Parse and normalize the JSON array from the response into List[str]
         try:
-            data = json.loads(query_answer)
-        except json.JSONDecodeError:
-            # Fallback: treat whole response as single translation string
-            logger.warning(f"Non-JSON response from translation model, using raw text: {query_answer}")
-            translations = [query_answer]
-        else:
-            translations = []
-            if isinstance(data, list):
-                if all(isinstance(item, str) for item in data):
-                    translations = data
-                elif all(isinstance(item, dict) for item in data):
-                    possible_keys = ["translation", "translated", "tgt", "text", "tr"]
-                    for item in data:
-                        value = None
-                        for key in possible_keys:
-                            if key in item and isinstance(item[key], str):
-                                value = item[key]
-                                break
-                        if value is None:
-                            logger.warning(f"Could not extract translation from item: {item}")
-                            raise HTTPException(status_code=500, detail="Invalid response format from translation model")
-                        translations.append(value)
-                else:
-                    logger.warning(f"Unexpected item types in response: {data}")
-                    raise HTTPException(status_code=500, detail="Invalid response format from translation model")
-            elif isinstance(data, str):
-                # Model returned a plain string, wrap it
-                translations = [data]
-            elif isinstance(data, dict) and "translations" in data and isinstance(data["translations"], list):
-                inner = data["translations"]
-                if all(isinstance(item, str) for item in inner):
-                    translations = inner
-                else:
-                    logger.warning(f"Unexpected item types in 'translations' field: {inner}")
-                    raise HTTPException(status_code=500, detail="Invalid response format from translation model")
-            else:
-                logger.warning(f"Unexpected response format (not list/str/dict[translations]): {data}")
-                raise HTTPException(status_code=500, detail="Invalid response format from translation model")
-
-        if len(translations) != len(request.sentences):
-            logger.warning(f"Unexpected response length: {translations}")
-            raise HTTPException(status_code=500, detail="Invalid response format from translation model")
+            translations = _parse_translation_llm_output(str(raw_content), len(request.sentences))
+        except ValueError as e:
+            logger.warning("Translation parse failed: %s (snippet=%r)", e, str(raw_content)[:400])
+            raise HTTPException(
+                status_code=500,
+                detail=f"Invalid response from translation model: {e}",
+            ) from e
 
         logger.debug(f"Translation successful: {translations}")
         return TranslationResponse(translations=translations)

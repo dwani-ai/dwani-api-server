@@ -170,6 +170,16 @@ def _vllm_chat_completions_url() -> str:
     return f"{base.rstrip('/')}/chat/completions"
 
 
+def _vllm_models_url() -> str:
+    base = _normalize_llm_base_url(os.getenv("DWANI_API_BASE_URL_LLM", "").strip())
+    if not base:
+        raise HTTPException(
+            status_code=503,
+            detail="LLM backend not configured (set DWANI_API_BASE_URL_LLM)",
+        )
+    return f"{base.rstrip('/')}/models"
+
+
 def _forward_headers_to_vllm(request: Request, body: bytes) -> dict[str, str]:
     headers: dict[str, str] = {}
     ct = request.headers.get("content-type")
@@ -177,6 +187,9 @@ def _forward_headers_to_vllm(request: Request, body: bytes) -> dict[str, str]:
         headers["Content-Type"] = ct
     elif body:
         headers["Content-Type"] = "application/json"
+    accept = request.headers.get("accept")
+    if accept:
+        headers["Accept"] = accept
     auth = request.headers.get("authorization")
     if auth:
         headers["Authorization"] = auth
@@ -1116,6 +1129,44 @@ async def openai_chat_completions_proxy(request: Request):
         raise HTTPException(status_code=504, detail="Upstream LLM timeout")
     except httpx.RequestError as e:
         logger.error(f"vLLM chat/completions proxy request error: {e}")
+        raise HTTPException(status_code=502, detail=f"Upstream LLM unreachable: {e}")
+
+    media_type = resp.headers.get("content-type", "application/json")
+    return Response(
+        content=resp.content, status_code=resp.status_code, media_type=media_type
+    )
+
+
+@app.get(
+    "/v1/models",
+    tags=["Chat"],
+    summary="OpenAI-compatible models list (vLLM proxy)",
+    description=(
+        "Forwards to the configured OpenAI-compatible `GET .../v1/models` endpoint "
+        "(DWANI_API_BASE_URL_LLM)."
+    ),
+    response_model=None,
+    responses={
+        200: {"description": "Models list JSON"},
+        502: {"description": "Upstream LLM error"},
+        503: {"description": "LLM URL not configured"},
+        504: {"description": "Upstream timeout"},
+    },
+)
+async def openai_models_proxy(request: Request):
+    upstream = _vllm_models_url()
+    fwd_headers = _forward_headers_to_vllm(request, b"")
+
+    timeout = httpx.Timeout(60.0, connect=30.0)
+
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.get(upstream, headers=fwd_headers)
+    except httpx.TimeoutException:
+        logger.error("vLLM models proxy timed out")
+        raise HTTPException(status_code=504, detail="Upstream LLM timeout")
+    except httpx.RequestError as e:
+        logger.error(f"vLLM models proxy request error: {e}")
         raise HTTPException(status_code=502, detail=f"Upstream LLM unreachable: {e}")
 
     media_type = resp.headers.get("content-type", "application/json")
